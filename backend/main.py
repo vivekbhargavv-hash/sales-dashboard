@@ -19,10 +19,12 @@ load_dotenv()
 
 app = FastAPI(title="Moeving Sales Dashboard API", version="2.0.0")
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "")
-allowed_origins = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
-if FRONTEND_URL:
-    allowed_origins.append(FRONTEND_URL.rstrip("/"))
+allowed_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "https://sales-dashboard-six-sigma.vercel.app"
+]
 
 app.add_middleware(
     CORSMiddleware,
