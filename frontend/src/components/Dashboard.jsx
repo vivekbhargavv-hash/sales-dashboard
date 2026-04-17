@@ -127,6 +127,45 @@ function DeploymentPipelineSection({ deploymentSummary, deploymentEfficiency }) 
   )
 }
 
+// ── Rebuild geo_fleet_nested from filtered flat rows (mirrors backend logic) ──
+const GEO_REGION_ORDER = ['North', 'West', 'South', 'East', 'Other']
+
+function buildGeoNested(rows) {
+  const regions = {}
+  for (const r of (rows || [])) {
+    const reg    = r.region || 'Other'
+    const city   = r.city   || 'Unknown'
+    const client = r.client || 'Unknown'
+    if (!regions[reg]) regions[reg] = { region: reg, fleet: 0, cities: {} }
+    regions[reg].fleet += r.fleet || 0
+    if (!regions[reg].cities[city]) regions[reg].cities[city] = { city, fleet: 0, clients: {} }
+    regions[reg].cities[city].fleet += r.fleet || 0
+    const clients = regions[reg].cities[city].clients
+    if (!clients[client]) clients[client] = { client, fleet: 0, vehicles: [] }
+    clients[client].fleet += r.fleet || 0
+    clients[client].vehicles.push({
+      vehicle: r.vehicle_type, fleet: r.fleet || 0, stage: r.stage, source: r.source,
+    })
+  }
+  return GEO_REGION_ORDER
+    .filter(reg => regions[reg])
+    .map(reg => ({
+      region: reg,
+      fleet:  regions[reg].fleet,
+      children: Object.values(regions[reg].cities)
+        .sort((a, b) => b.fleet - a.fleet)
+        .map(c => ({
+          city: c.city, fleet: c.fleet,
+          children: Object.values(c.clients)
+            .sort((a, b) => b.fleet - a.fleet)
+            .map(cl => ({
+              client: cl.client, fleet: cl.fleet,
+              children: cl.vehicles.sort((a, b) => b.fleet - a.fleet),
+            })),
+        })),
+    }))
+}
+
 function applyFilters(data, filters) {
   if (!data) return data
   const { cities, stages, categories, assignees } = filters
@@ -232,6 +271,7 @@ function applyFilters(data, filters) {
     top_clients:      topClients,
     city_heatmap:     cityHeatmap,
     geo_fleet:        geoFleet,
+    geo_fleet_nested: buildGeoNested(geoFleet),
     concentration_risk: {
       top5_pct:     nlTotal > 0 ? top5val  / nlTotal * 100 : 0,
       top10_pct:    nlTotal > 0 ? top10val / nlTotal * 100 : 0,
@@ -296,10 +336,10 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
 
       case 'geo':
         return (
-          <div className="space-y-6">
-            <GeoFleet geoFleet={d.geo_fleet} />
-            <CityHeatmap cityHeatmap={d.city_heatmap} />
-          </div>
+          <GeoFleet
+            geoFleet={d.geo_fleet}
+            geoFleetNested={d.geo_fleet_nested}
+          />
         )
 
       case 'monthly_closures':

@@ -132,6 +132,77 @@ def _date_ts(ts):
     return pd.Timestamp(0)
 
 
+_GEO_REGION_ORDER = ['North', 'West', 'South', 'East', 'Other']
+
+
+def _build_geo_nested(rows):
+    """Build Region→City→Client→Vehicle tree from flat geo rows.
+    Each level aggregates fleet. Sorted desc by fleet at every level.
+    """
+    regions = {}
+    for r in rows:
+        reg    = r['region']
+        city   = r['city']
+        client = r['client']
+        vtype  = r['vehicle_type']
+        fleet  = r['fleet']
+
+        if reg not in regions:
+            regions[reg] = {'region': reg, 'fleet': 0.0, 'cities': {}}
+        regions[reg]['fleet'] += fleet
+
+        if city not in regions[reg]['cities']:
+            regions[reg]['cities'][city] = {'city': city, 'fleet': 0.0, 'clients': {}}
+        regions[reg]['cities'][city]['fleet'] += fleet
+
+        clients = regions[reg]['cities'][city]['clients']
+        if client not in clients:
+            clients[client] = {'client': client, 'fleet': 0.0, 'vehicles': []}
+        clients[client]['fleet'] += fleet
+        clients[client]['vehicles'].append({
+            'vehicle': vtype,
+            'fleet':   round(float(fleet), 2),
+            'stage':   r['stage'],
+            'source':  r['source'],
+        })
+
+    result = []
+    for reg_key in _GEO_REGION_ORDER:
+        if reg_key not in regions:
+            continue
+        reg_data = regions[reg_key]
+        cities_list = sorted(
+            [
+                {
+                    'city':     city_key,
+                    'fleet':    round(city_val['fleet'], 2),
+                    'children': sorted(
+                        [
+                            {
+                                'client':   cli_key,
+                                'fleet':    round(cli_val['fleet'], 2),
+                                'children': sorted(
+                                    cli_val['vehicles'],
+                                    key=lambda v: -v['fleet']
+                                )
+                            }
+                            for cli_key, cli_val in city_val['clients'].items()
+                        ],
+                        key=lambda c: -c['fleet']
+                    )
+                }
+                for city_key, city_val in reg_data['cities'].items()
+            ],
+            key=lambda c: -c['fleet']
+        )
+        result.append({
+            'region':   reg_key,
+            'fleet':    round(reg_data['fleet'], 2),
+            'children': cities_list,
+        })
+    return result
+
+
 def _fmt_month_label(period_str):
     """Convert '2026-04' to 'Apr-26'."""
     try:
@@ -876,6 +947,7 @@ def process_csvs(deals_bytes, projects_bytes):
     # Sort by region, city, client for deterministic rendering
     geo_rows.sort(key=lambda r: (r['region'], r['city'], r['client']))
     geo_fleet = geo_rows
+    geo_fleet_nested = _build_geo_nested(geo_rows)
 
     return {
         'kpis': kpis,
@@ -898,4 +970,5 @@ def process_csvs(deals_bytes, projects_bytes):
         'monthly_summary': monthly_summary,
         'combined_records': combined_records,
         'geo_fleet': geo_fleet,
+        'geo_fleet_nested': geo_fleet_nested,
     }
