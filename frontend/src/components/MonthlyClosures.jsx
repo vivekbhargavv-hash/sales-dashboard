@@ -4,7 +4,7 @@ import { useTheme } from '../ThemeContext'
 export default function MonthlyClosures({ monthlyClosures, monthlySummary }) {
   const { tw, isDark } = useTheme()
 
-  // Sort: by month_key order (backend already sorts, but keep stable)
+  // Backend already sorts DESC; mirror that sort here for stability
   const sortedClosures = useMemo(() => {
     if (!monthlyClosures || monthlyClosures.length === 0) return []
     return [...monthlyClosures]

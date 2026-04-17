@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
+import ReactECharts from 'echarts-for-react'
 import { UploadCloud, Sun, Moon, LogOut, User, Clock, Truck, TrendingUp } from 'lucide-react'
-import { useTheme, STAGE_ORDER, sortByStageOrder, formatFleet, formatNum } from '../ThemeContext'
+import { useTheme, STAGE_ORDER, STAGE_COLORS, sortByStageOrder, formatFleet, formatNum } from '../ThemeContext'
 import Filters from './Filters'
 import KPICards from './KPICards'
 import StageSummary from './StageSummary'
@@ -18,25 +19,70 @@ import AllRecords from './AllRecords'
 const TABS = [
   { id: 'overview',         label: 'Overview' },
   { id: 'pipeline',         label: 'Pipeline Health' },
-  { id: 'conversion',       label: 'Conversion & Velocity' },
   { id: 'clients',          label: 'Client Insights' },
   { id: 'geo',              label: 'Geographic & Fleet' },
   { id: 'monthly_closures', label: 'Monthly Closures' },
   { id: 'all_records',      label: 'All Records' },
 ]
 
-// Deployment stage colours (pill badges)
+// Deployment stage colours (pill badges + bar chart)
 const DEPL_COLORS = {
-  'Pending Deployment': { bg: 'bg-yellow-500/15', text: 'text-yellow-500', border: 'border-yellow-500/30' },
-  'Partially Deployed': { bg: 'bg-blue-500/15',   text: 'text-blue-400',   border: 'border-blue-500/30'   },
-  'Deployed':           { bg: 'bg-green-500/15',  text: 'text-green-500',  border: 'border-green-500/30'  },
-  'On Hold':            { bg: 'bg-orange-500/15', text: 'text-orange-400', border: 'border-orange-500/30' },
-  'Lost':               { bg: 'bg-red-500/15',    text: 'text-red-400',    border: 'border-red-500/30'    },
+  'Pending Deployment': { bg: 'bg-yellow-500/15', text: 'text-yellow-500', border: 'border-yellow-500/30', bar: '#eab308' },
+  'Partially Deployed': { bg: 'bg-blue-500/15',   text: 'text-blue-400',   border: 'border-blue-500/30',   bar: '#3b82f6' },
+  'Deployed':           { bg: 'bg-green-500/15',  text: 'text-green-500',  border: 'border-green-500/30',  bar: '#10b981' },
+  'On Hold':            { bg: 'bg-orange-500/15', text: 'text-orange-400', border: 'border-orange-500/30', bar: '#f97316' },
+  'Lost':               { bg: 'bg-red-500/15',    text: 'text-red-400',    border: 'border-red-500/30',    bar: '#ef4444' },
 }
 
 function DeploymentPipelineSection({ deploymentSummary, deploymentEfficiency }) {
-  const { isDark, tw } = useTheme()
+  const { isDark, tw, ct } = useTheme()
   if (!deploymentSummary || deploymentSummary.length === 0) return null
+
+  const chartOption = {
+    backgroundColor: ct.bg,
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: ct.tooltip.backgroundColor,
+      borderColor: ct.tooltip.borderColor,
+      textStyle: ct.tooltip.textStyle,
+      extraCssText: ct.tooltip.extraCssText,
+      formatter: (params) => {
+        const p = params[0]
+        const item = deploymentSummary.find(d => d.stage === p.name)
+        return `<b>${p.name}</b><br/>Fleet: <b>${formatFleet(p.value)}</b> vehicles<br/>Count: <b>${item?.count ?? 0}</b> projects`
+      }
+    },
+    grid: { left: '2%', right: '10%', top: '5%', bottom: '5%', containLabel: true },
+    xAxis: {
+      type: 'value',
+      axisLine: { lineStyle: { color: ct.axisLine } },
+      splitLine: { lineStyle: { color: ct.splitLine } },
+      axisLabel: { color: ct.text, fontSize: 10, formatter: (v) => formatFleet(v) },
+    },
+    yAxis: {
+      type: 'category',
+      data: deploymentSummary.map(d => d.stage),
+      axisLine: { lineStyle: { color: ct.axisLine } },
+      axisLabel: { color: ct.text, fontSize: 11 },
+    },
+    series: [{
+      type: 'bar',
+      data: deploymentSummary.map(d => ({
+        value: d.fleet,
+        itemStyle: {
+          color: DEPL_COLORS[d.stage]?.bar || '#64748b',
+          borderRadius: [0, 4, 4, 0],
+        }
+      })),
+      label: {
+        show: true,
+        position: 'right',
+        color: ct.text,
+        fontSize: 10,
+        formatter: (p) => formatFleet(p.value),
+      }
+    }]
+  }
 
   return (
     <div className={`${tw.card} rounded-2xl p-5`}>
@@ -45,7 +91,6 @@ function DeploymentPipelineSection({ deploymentSummary, deploymentEfficiency }) 
           <Truck className="w-5 h-5 text-green-500" />
           <h2 className={`font-semibold text-base ${tw.textPrimary}`}>Deployment Pipeline</h2>
         </div>
-        {/* Deployment Efficiency KPI */}
         <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border ${
           isDark ? 'border-green-500/30 bg-green-500/10' : 'border-green-300 bg-green-50'
         }`}>
@@ -55,7 +100,8 @@ function DeploymentPipelineSection({ deploymentSummary, deploymentEfficiency }) 
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      {/* Status cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         {deploymentSummary.map(item => {
           const colors = DEPL_COLORS[item.stage] || { bg: 'bg-slate-500/15', text: 'text-slate-400', border: 'border-slate-500/30' }
           return (
@@ -73,6 +119,9 @@ function DeploymentPipelineSection({ deploymentSummary, deploymentEfficiency }) 
           )
         })}
       </div>
+
+      {/* Bar chart */}
+      <ReactECharts option={chartOption} style={{ height: '200px', width: '100%' }} />
     </div>
   )
 }
@@ -208,9 +257,10 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
           <div className="space-y-6">
             <KPICards kpis={d.kpis} />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <StageSummary stageSummary={d.stage_summary} />
-              <VehicleCategory vehicleCategory={d.vehicle_category} />
+              <StageSummary stageSummary={d.stage_summary} title="Deals Stage Summary" />
+              <StageSummary stageSummary={data.projects_stage_summary} title="Projects Stage Summary" />
             </div>
+            <VehicleCategory vehicleCategory={d.vehicle_category} />
             <DeploymentPipelineSection
               deploymentSummary={data.deployment_summary}
               deploymentEfficiency={data.deployment_efficiency}
@@ -222,15 +272,7 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
         return (
           <div className="space-y-6">
             <PipelineForecast forecast={d.forecast} />
-            <StageSummary stageSummary={d.stage_summary} />
-          </div>
-        )
-
-      case 'conversion':
-        return (
-          <div className="space-y-6">
-            <SalesFunnel funnel={d.funnel} />
-            <MoMPerformance momPerformance={d.mom_performance} velocity={d.velocity} />
+            <StageSummary stageSummary={d.stage_summary} title="Deals Stage Summary" />
           </div>
         )
 

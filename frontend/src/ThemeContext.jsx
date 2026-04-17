@@ -8,6 +8,7 @@ export const STAGE_ORDER = [
 ]
 
 export const STAGE_COLORS = {
+  // Deal stages
   'New': '#64748b',
   'Requirements Gathering': '#3b82f6',
   'Proposal Sent': '#06b6d4',
@@ -17,6 +18,11 @@ export const STAGE_COLORS = {
   'Pending Deployment': '#6366f1',
   'Dormant': '#475569',
   'Closed Lost': '#ef4444',
+  // Project stages
+  'Partially Deployed': '#3b82f6',
+  'Deployed': '#10b981',
+  'On Hold': '#f59e0b',
+  'Lost': '#ef4444',
 }
 
 // Fleet size: just a plain integer (number of vehicles)

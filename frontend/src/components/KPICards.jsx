@@ -1,10 +1,21 @@
 import React from 'react'
-import { TrendingUp, Truck, Clock, Target, Timer, Percent, Activity, Award } from 'lucide-react'
+import { TrendingUp, Truck, Target, Timer, Percent, Activity } from 'lucide-react'
 import { useTheme, formatFleet, formatNum } from '../ThemeContext'
 
 export { formatFleet, formatNum }
 
 const CARDS = [
+  {
+    key: 'total_opportunities',
+    title: 'Total Opportunities',
+    icon: Target,
+    border: 'border-l-orange-500',
+    iconBg: 'bg-orange-500/10',
+    iconColor: 'text-orange-400',
+    format: (v) => formatNum(v),
+    unit: 'opps',
+    context: 'Deals + new projects',
+  },
   {
     key: 'total_pipeline_value',
     title: 'Total Pipeline Fleet',
@@ -14,18 +25,7 @@ const CARDS = [
     iconColor: 'text-blue-400',
     format: (v) => formatFleet(v),
     unit: 'vehicles',
-    context: 'Deals + Pending Projects',
-  },
-  {
-    key: 'total_closed_won',
-    title: 'Closed Won Fleet',
-    icon: Award,
-    border: 'border-l-emerald-500',
-    iconBg: 'bg-emerald-500/10',
-    iconColor: 'text-emerald-400',
-    format: (v) => formatFleet(v),
-    unit: 'vehicles',
-    context: 'Confirmed fleet',
+    context: 'Active deals + pending projects',
   },
   {
     key: 'total_pending_deployment',
@@ -37,17 +37,6 @@ const CARDS = [
     format: (v) => formatFleet(v),
     unit: 'vehicles',
     context: 'Awaiting rollout',
-  },
-  {
-    key: 'total_opportunities',
-    title: 'Total Opportunities',
-    icon: Target,
-    border: 'border-l-orange-500',
-    iconBg: 'bg-orange-500/10',
-    iconColor: 'text-orange-400',
-    format: (v) => formatNum(v),
-    unit: 'opps',
-    context: 'Deals + new projects',
   },
   {
     key: 'avg_tat_days',
@@ -69,7 +58,7 @@ const CARDS = [
     iconColor: 'text-pink-400',
     format: (v) => v != null && v !== 0 ? `${(+v).toFixed(1)}%` : '—',
     unit: null,
-    context: '(Quote − Cost) / Quote',
+    context: 'Closed Won weighted',
   },
   {
     key: 'win_rate',
@@ -89,7 +78,7 @@ export default function KPICards({ kpis }) {
   if (!kpis) return null
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
       {CARDS.map(card => {
         const Icon = card.icon
         const value = kpis[card.key]

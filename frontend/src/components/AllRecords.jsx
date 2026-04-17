@@ -70,7 +70,7 @@ function MultiSelectDropdown({ label, options, selected, onChange, tw }) {
   )
 }
 
-// ── Date range picker (Last 7 / 30 / 90 days) ────────────────────────────────
+// ── Date range picker ─────────────────────────────────────────────────────────
 
 const DATE_RANGES = [
   { label: 'All time', days: null },
@@ -102,8 +102,8 @@ function DateRangePicker({ value, onChange, tw, isDark }) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtMargin(v) {
-  if (v == null) return '—'
+function fmtNum(v) {
+  if (v == null || v === 0) return '—'
   return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })
 }
 
@@ -112,11 +112,9 @@ function fmtMarginPct(v) {
   return `${(+v).toFixed(1)}%`
 }
 
-// Parse "YYYY-MM-DD HH:MM" date string to a Date object
 function parseRecordDate(s) {
   if (!s) return null
   try {
-    // "2026-04-17 10:30" → ISO "2026-04-17T10:30:00"
     return new Date(s.replace(' ', 'T') + ':00')
   } catch {
     return null
@@ -132,9 +130,8 @@ export default function AllRecords({ combinedRecords }) {
   const [selectedStages, setSelectedStages] = useState(new Set())
   const [selectedCities, setSelectedCities] = useState(new Set())
   const [selectedSpocs,  setSelectedSpocs]  = useState(new Set())
-  const [dateDays,       setDateDays]       = useState(null)  // null = all time
+  const [dateDays,       setDateDays]       = useState(null)
 
-  // Derive filter options from full dataset
   const { typeOptions, stageOptions, cityOptions, spocOptions } = useMemo(() => {
     if (!combinedRecords?.length)
       return { typeOptions: [], stageOptions: [], cityOptions: [], spocOptions: [] }
@@ -147,7 +144,6 @@ export default function AllRecords({ combinedRecords }) {
     }
   }, [combinedRecords])
 
-  // Cutoff date for date filter
   const cutoff = useMemo(() => {
     if (!dateDays) return null
     const d = new Date()
@@ -155,7 +151,6 @@ export default function AllRecords({ combinedRecords }) {
     return d
   }, [dateDays])
 
-  // Apply all filters
   const filteredRecords = useMemo(() => {
     if (!combinedRecords) return []
     return combinedRecords.filter(r => {
@@ -182,6 +177,24 @@ export default function AllRecords({ combinedRecords }) {
       </div>
     )
   }
+
+  const COLUMNS = [
+    { label: 'Type',           align: 'left'  },
+    { label: 'Name',           align: 'left'  },
+    { label: 'Client',         align: 'left'  },
+    { label: 'Stage',          align: 'left'  },
+    { label: 'City',           align: 'left'  },
+    { label: 'Vehicle',        align: 'left'  },
+    { label: 'Fleet',          align: 'right' },
+    { label: 'SPOC',           align: 'left'  },
+    { label: 'Driver Type',    align: 'left'  },
+    { label: 'Charging Scope', align: 'left'  },
+    { label: 'Quote',          align: 'right' },
+    { label: 'Total Cost',     align: 'right' },
+    { label: 'Margin',         align: 'right' },
+    { label: 'Margin %',       align: 'right' },
+    { label: 'Last Updated',   align: 'left'  },
+  ]
 
   return (
     <div className="space-y-4">
@@ -215,19 +228,7 @@ export default function AllRecords({ combinedRecords }) {
             <table className="w-full text-sm">
               <thead className={`sticky top-0 z-10 ${isDark ? 'bg-slate-800' : 'bg-white'}`}>
                 <tr className={tw.divider}>
-                  {[
-                    { label: 'Type',         align: 'left'  },
-                    { label: 'Name',         align: 'left'  },
-                    { label: 'Client',       align: 'left'  },
-                    { label: 'Stage',        align: 'left'  },
-                    { label: 'City',         align: 'left'  },
-                    { label: 'Vehicle',      align: 'left'  },
-                    { label: 'Fleet',        align: 'right' },
-                    { label: 'Margin',       align: 'right' },
-                    { label: 'Margin %',     align: 'right' },
-                    { label: 'SPOC',         align: 'left'  },
-                    { label: 'Last Updated', align: 'left'  },
-                  ].map(col => (
+                  {COLUMNS.map(col => (
                     <th key={col.label}
                       className={`py-3 px-4 text-xs font-semibold uppercase tracking-wide text-green-600
                         whitespace-nowrap text-${col.align}`}>
@@ -253,7 +254,7 @@ export default function AllRecords({ combinedRecords }) {
                       </span>
                     </td>
 
-                    <td className={`py-2.5 px-4 font-medium ${tw.textBody} max-w-[200px] truncate`}>
+                    <td className={`py-2.5 px-4 font-medium ${tw.textBody} max-w-[180px] truncate`}>
                       {row.name || '—'}
                     </td>
 
@@ -278,13 +279,37 @@ export default function AllRecords({ combinedRecords }) {
                       {row.fleet != null ? Number(row.fleet).toLocaleString('en-IN') : '—'}
                     </td>
 
-                    {/* Margin — only meaningful for Deals with quote data */}
+                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
+                      {row.spoc || '—'}
+                    </td>
+
+                    {/* Driver Type */}
+                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
+                      {row.driver_type || '—'}
+                    </td>
+
+                    {/* Charging Scope */}
+                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
+                      {row.charging_scope || '—'}
+                    </td>
+
+                    {/* Quote */}
+                    <td className={`py-2.5 px-4 text-right tabular-nums whitespace-nowrap ${tw.textVal}`}>
+                      {fmtNum(row.quote)}
+                    </td>
+
+                    {/* Total Cost */}
+                    <td className={`py-2.5 px-4 text-right tabular-nums whitespace-nowrap ${tw.textVal}`}>
+                      {fmtNum(row.total_cost)}
+                    </td>
+
+                    {/* Margin */}
                     <td className={`py-2.5 px-4 text-right tabular-nums whitespace-nowrap ${
                       row.margin != null
                         ? row.margin >= 0 ? 'text-emerald-500' : 'text-red-400'
                         : tw.textMuted
                     }`}>
-                      {fmtMargin(row.margin)}
+                      {fmtNum(row.margin)}
                     </td>
 
                     {/* Margin % */}
@@ -294,10 +319,6 @@ export default function AllRecords({ combinedRecords }) {
                         : tw.textMuted
                     }`}>
                       {fmtMarginPct(row.margin_percent)}
-                    </td>
-
-                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
-                      {row.spoc || '—'}
                     </td>
 
                     <td className={`py-2.5 px-4 ${tw.textMuted} whitespace-nowrap text-xs`}>

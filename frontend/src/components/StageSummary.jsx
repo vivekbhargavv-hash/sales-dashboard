@@ -3,7 +3,7 @@ import ReactECharts from 'echarts-for-react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { useTheme, STAGE_COLORS, formatFleet } from '../ThemeContext'
 
-export default function StageSummary({ stageSummary }) {
+export default function StageSummary({ stageSummary, title = '{title}' }) {
   const [sortField, setSortField] = useState('stage_order')
   const [sortDir, setSortDir] = useState('asc')
   const { tw, ct } = useTheme()
@@ -11,7 +11,7 @@ export default function StageSummary({ stageSummary }) {
   if (!stageSummary || stageSummary.length === 0) {
     return (
       <div className={`${tw.card} rounded-xl p-5`}>
-        <h2 className={`text-lg font-semibold mb-4 pb-2 ${tw.divider} ${tw.sectionTitle}`}>Stage Summary</h2>
+        <h2 className={`text-lg font-semibold mb-4 pb-2 ${tw.divider} ${tw.sectionTitle}`}>{title}</h2>
         <p className={`text-sm ${tw.textSecondary}`}>No stage data available</p>
       </div>
     )
@@ -89,7 +89,7 @@ export default function StageSummary({ stageSummary }) {
   return (
     <div className={`${tw.card} rounded-xl p-5`}>
       <h2 className={`text-lg font-semibold mb-4 pb-2 ${tw.divider} ${tw.sectionTitle}`}>
-        Stage Summary
+        {title}
       </h2>
 
       <ReactECharts option={option} style={{ height: '300px', width: '100%' }} />
