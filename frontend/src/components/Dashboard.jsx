@@ -133,6 +133,15 @@ function applyFilters(data, filters) {
   const hasFilters = cities.length || stages.length || categories.length || assignees.length
   if (!hasFilters) return data
 
+  // Filter geo_fleet rows using the same criteria
+  const geoFleet = (data.geo_fleet || []).filter(row => {
+    if (cities.length     && !cities.includes(row.city))             return false
+    if (stages.length     && !stages.includes(row.stage))            return false
+    if (categories.length && !categories.includes(row.vehicle_category)) return false
+    if (assignees.length  && !assignees.includes(row.assigned_to))   return false
+    return true
+  })
+
   const table = (data.summary_table || []).filter(row => {
     if (cities.length     && !cities.includes(row.city))                 return false
     if (stages.length     && !stages.includes(row.stage))                return false
@@ -222,6 +231,7 @@ function applyFilters(data, filters) {
     vehicle_category: vehicleCategory,
     top_clients:      topClients,
     city_heatmap:     cityHeatmap,
+    geo_fleet:        geoFleet,
     concentration_risk: {
       top5_pct:     nlTotal > 0 ? top5val  / nlTotal * 100 : 0,
       top10_pct:    nlTotal > 0 ? top10val / nlTotal * 100 : 0,
@@ -287,9 +297,8 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
       case 'geo':
         return (
           <div className="space-y-6">
-            <GeoFleet geoFleet={data.geo_fleet} />
+            <GeoFleet geoFleet={d.geo_fleet} />
             <CityHeatmap cityHeatmap={d.city_heatmap} />
-            <VehicleCategory vehicleCategory={d.vehicle_category} />
           </div>
         )
 

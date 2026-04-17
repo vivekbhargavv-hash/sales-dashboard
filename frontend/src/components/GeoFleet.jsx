@@ -201,33 +201,51 @@ export default function GeoFleet({ geoFleet }) {
   return (
     <div className="space-y-6">
 
-      {/* ── Region summary cards ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {regionSummary.map(({ region, fleet, cities, clients }) => {
-          const colors = REGION_COLORS[region] || REGION_COLORS.Other
-          return (
-            <div key={region} className={`${tw.card} rounded-xl p-4 border-l-4`}
-              style={{ borderLeftColor: colors.dot }}>
-              <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border mb-3 ${colors.pill}`}>
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: colors.dot }} />
-                {region}
-              </div>
-              <p className={`text-2xl font-bold ${tw.textPrimary}`}>{fmtFleetNum(fleet)}</p>
-              <p className={`text-xs mt-0.5 ${tw.textMuted}`}>vehicles</p>
-              <p className={`text-xs mt-2 ${tw.textSecondary}`}>
-                {cities} {cities === 1 ? 'city' : 'cities'} · {clients} clients
-              </p>
-              {totalFleet > 0 && (
-                <div className={`mt-3 h-1.5 rounded-full ${isDark ? 'bg-slate-700' : 'bg-gray-100'}`}>
-                  <div
-                    className={`h-1.5 rounded-full ${colors.bar}`}
-                    style={{ width: `${Math.min(fleet / totalFleet * 100, 100).toFixed(1)}%` }}
-                  />
-                </div>
-              )}
+      {/* ── Region summary cards — 5 columns, horizontal scroll on small screens ── */}
+      <div className="overflow-x-auto pb-1">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(160px, 1fr))', gap: '1rem' }}>
+          {/* Total card */}
+          <div className={`${tw.card} rounded-xl p-4 border-l-4`}
+            style={{ borderLeftColor: '#22c55e' }}>
+            <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border mb-3 bg-green-500/15 text-green-500 border-green-500/30`}>
+              <span className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500" />
+              All Regions
             </div>
-          )
-        })}
+            <p className={`text-2xl font-bold ${tw.textPrimary}`}>{fmtFleetNum(totalFleet)}</p>
+            <p className={`text-xs mt-0.5 ${tw.textMuted}`}>vehicles</p>
+            <p className={`text-xs mt-2 ${tw.textSecondary}`}>
+              {regionSummary.reduce((s, r) => s + r.cities, 0)} cities ·{' '}
+              {regionSummary.reduce((s, r) => s + r.clients, 0)} clients
+            </p>
+            <div className={`mt-3 h-1.5 rounded-full bg-green-500`} style={{ width: '100%' }} />
+          </div>
+
+          {regionSummary.map(({ region, fleet, cities, clients }) => {
+            const colors = REGION_COLORS[region] || REGION_COLORS.Other
+            return (
+              <div key={region} className={`${tw.card} rounded-xl p-4 border-l-4`}
+                style={{ borderLeftColor: colors.dot }}>
+                <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border mb-3 ${colors.pill}`}>
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: colors.dot }} />
+                  {region}
+                </div>
+                <p className={`text-2xl font-bold ${tw.textPrimary}`}>{fmtFleetNum(fleet)}</p>
+                <p className={`text-xs mt-0.5 ${tw.textMuted}`}>vehicles</p>
+                <p className={`text-xs mt-2 ${tw.textSecondary}`}>
+                  {cities} {cities === 1 ? 'city' : 'cities'} · {clients} clients
+                </p>
+                {totalFleet > 0 && (
+                  <div className={`mt-3 h-1.5 rounded-full ${isDark ? 'bg-slate-700' : 'bg-gray-100'}`}>
+                    <div
+                      className={`h-1.5 rounded-full ${colors.bar}`}
+                      style={{ width: `${Math.min(fleet / totalFleet * 100, 100).toFixed(1)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {/* ── Drilldown table ── */}

@@ -850,22 +850,27 @@ def process_csvs(deals_bytes, projects_bytes):
             'city': str(row['city']),
             'client': str(row['client_name']),
             'vehicle_type': str(row['vehicle_type']),
+            'vehicle_category': str(row['vehicle_category']),
             'fleet': safe_float(row['deal_size']),
             'source': 'Deal',
             'stage': str(row['stage']),
+            'assigned_to': str(row['assigned_to']),
         })
 
-    # Projects: Pending Deployment only
-    for _, row in proj[proj['status'] == 'Pending Deployment'].iterrows():
-        client = str(row['project_name'])
+    # Projects: Pending Deployment only, NOT converted from deal
+    for _, row in proj[
+        (proj['status'] == 'Pending Deployment') & (~proj['is_converted'])
+    ].iterrows():
         geo_rows.append({
             'region': get_region(row['city']),
             'city': str(row['city']),
-            'client': client,
+            'client': str(row['project_name']),
             'vehicle_type': str(row['vehicle_type']),
+            'vehicle_category': get_vehicle_category(str(row['vehicle_type'])),
             'fleet': safe_float(row['fleet_size']),
             'source': 'Project',
             'stage': 'Pending Deployment',
+            'assigned_to': str(row['assigned_to']),
         })
 
     # Sort by region, city, client for deterministic rendering

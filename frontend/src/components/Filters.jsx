@@ -66,20 +66,43 @@ function MultiSelect({ label, options, selected, onChange, tw }) {
 
 export default function Filters({ data, filters, onFiltersChange }) {
   const { tw } = useTheme()
-  const summaryTable = data?.summary_table || []
+  const summaryTable   = data?.summary_table   || []
+  const combinedRecords = data?.combined_records || []
+  const geoFleet       = data?.geo_fleet        || []
 
   const getUnique = (field) => [...new Set(summaryTable.map(r => r[field]).filter(Boolean))].sort()
 
-  // Stages sorted by STAGE_ORDER, not alphabetically
-  const allStages = getUnique('stage')
+  // Stages: deal stages from summary_table PLUS project stages from combined_records + geo_fleet
+  const dealStages    = summaryTable.map(r => r.stage)
+  const projectStages = [
+    ...combinedRecords.map(r => r.stage),
+    ...geoFleet.map(r => r.stage),
+  ]
+  const allStagesSet = new Set([...dealStages, ...projectStages].filter(Boolean))
   const stages = [
-    ...STAGE_ORDER.filter(s => allStages.includes(s)),
-    ...allStages.filter(s => !STAGE_ORDER.includes(s)).sort(),
+    ...STAGE_ORDER.filter(s => allStagesSet.has(s)),
+    ...[...allStagesSet].filter(s => !STAGE_ORDER.includes(s)).sort(),
   ]
 
-  const cities = getUnique('city')
-  const categories = getUnique('vehicle_category')
-  const assignees = getUnique('assigned_to')
+  // Cities and vehicle categories from both deals and geo_fleet
+  const citiesSet = new Set([
+    ...summaryTable.map(r => r.city),
+    ...geoFleet.map(r => r.city),
+  ].filter(Boolean))
+  const cities = [...citiesSet].sort()
+
+  const categoriesSet = new Set([
+    ...summaryTable.map(r => r.vehicle_category),
+    ...geoFleet.map(r => r.vehicle_category),
+  ].filter(Boolean))
+  const categories = [...categoriesSet].sort()
+
+  // SPOCs from deals + geo_fleet (which carries project assigned_to)
+  const assigneesSet = new Set([
+    ...summaryTable.map(r => r.assigned_to),
+    ...geoFleet.map(r => r.assigned_to),
+  ].filter(Boolean))
+  const assignees = [...assigneesSet].sort()
 
   const activeCount = Object.values(filters).reduce((sum, arr) => sum + arr.length, 0)
 
