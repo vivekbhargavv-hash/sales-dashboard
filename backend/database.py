@@ -2,7 +2,7 @@
 Database setup using SQLAlchemy.
 Supports SQLite (local dev) and PostgreSQL (production via DATABASE_URL).
 """
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import os
@@ -40,6 +40,18 @@ class UserDashboard(Base):
     user_id        = Column(Integer, nullable=False, index=True)
     dashboard_json = Column(Text, nullable=False)   # full JSON blob
     uploaded_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class PasswordResetToken(Base):
+    """Single-use tokens for password reset emails. Expire after 30 min."""
+    __tablename__ = "password_reset_tokens"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, nullable=False, index=True)
+    token      = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used       = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

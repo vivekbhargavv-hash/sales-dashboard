@@ -3,15 +3,24 @@ import { ThemeProvider, useTheme } from './ThemeContext'
 import Login from './components/Login'
 import Upload from './components/Upload'
 import Dashboard from './components/Dashboard'
+import ResetPassword from './components/ResetPassword'
 import { getToken, getUser, clearAuth, isAuthenticated } from './utils/auth'
 import api from './utils/api'
 
 function AppInner() {
   const { isDark } = useTheme()
 
+  // ── Password-reset token from URL (/reset-password?token=xxx) ────────────
+  const [resetToken, setResetToken] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    return window.location.pathname === '/reset-password'
+      ? params.get('token') || null
+      : null
+  })
+
   // auth state
-  const [authed, setAuthed]               = useState(isAuthenticated)
-  const [currentUser, setCurrentUser]     = useState(getUser)
+  const [authed, setAuthed]           = useState(isAuthenticated)
+  const [currentUser, setCurrentUser] = useState(getUser)
 
   // dashboard state
   const [dashboardData, setDashboardData] = useState(null)
@@ -65,7 +74,19 @@ function AppInner() {
     setDashboardData(null)
   }
 
+  const handleBackToLogin = () => {
+    // Clear the token from the URL without reloading the page
+    window.history.replaceState({}, '', '/')
+    setResetToken(null)
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
+
+  // Password-reset flow takes priority over everything else
+  if (resetToken) {
+    return <ResetPassword token={resetToken} onBackToLogin={handleBackToLogin} />
+  }
+
   if (!authed) {
     return <Login onAuth={handleAuth} />
   }

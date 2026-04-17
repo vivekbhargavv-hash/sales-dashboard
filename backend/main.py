@@ -1,32 +1,35 @@
 """
 Moeving Sales Dashboard — FastAPI Backend
-Production-ready: JWT auth, SQLite/PostgreSQL persistence, file size limits.
+Production-ready: JWT auth, SQLite/PostgreSQL persistence, file size limits,
+password reset via Resend email.
 """
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-import json, os
-from datetime import datetime
+import json, os, secrets
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 from data_processor import process_csvs
 from auth import verify_password, get_password_hash, create_access_token, decode_token
-from database import get_db, init_db, User, UserDashboard
+from database import get_db, init_db, User, UserDashboard, PasswordResetToken
 
 load_dotenv()
 
-app = FastAPI(title="Moeving Sales Dashboard API", version="2.0.0")
+app = FastAPI(title="Moeving Sales Dashboard API", version="2.1.0")
 
-FRONTEND_URL = os.getenv("FRONTEND_URL")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM    = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+RESET_EXPIRY_MINUTES = 30
 
 allowed_origins = [
     "http://localhost:5173",
     "http://localhost:3000",
     "http://127.0.0.1:5173",
 ]
-
 if FRONTEND_URL:
     allowed_origins.append(FRONTEND_URL.rstrip("/"))
 
@@ -40,11 +43,16 @@ app.add_middleware(
 
 MAX_FILE_BYTES = int(os.getenv("MAX_FILE_MB", "20")) * 1024 * 1024
 
+
 @app.on_event("startup")
 async def startup_event():
     init_db()
 
+
+# ── Auth helpers ───────────────────────────────────────────────────────────────
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
+
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     email = decode_token(token)
@@ -59,6 +67,76 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found.")
     return user
 
+
+def _user_response(user: User, token: str) -> dict:
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"id": user.id, "name": user.name, "email": user.email},
+    }
+
+
+def _send_reset_email(to_email: str, name: str, reset_url: str):
+    """Send password-reset email via Resend. Falls back to console log if no API key."""
+    if not RESEND_API_KEY:
+        # Local dev: print the link so you can test without an email provider
+        print(f"\n{'='*60}")
+        print(f"[DEV] Password reset link for {to_email}:")
+        print(f"  {reset_url}")
+        print(f"{'='*60}\n")
+        return
+
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        resend.Emails.send({
+            "from": RESEND_FROM,
+            "to": to_email,
+            "subject": "Reset your Moeving password",
+            "html": f"""
+<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;background:#f4f4f5;margin:0;padding:40px 0;">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;
+              padding:40px;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+    <div style="text-align:center;margin-bottom:32px;">
+      <div style="background:#16a34a;display:inline-block;padding:10px 24px;
+                  border-radius:8px;color:#fff;font-weight:700;font-size:18px;
+                  letter-spacing:1px;">MOEVING</div>
+    </div>
+    <h2 style="color:#111827;margin:0 0 8px;">Reset your password</h2>
+    <p style="color:#6b7280;margin:0 0 24px;">
+      Hi {name},<br><br>
+      We received a request to reset the password for your Moeving account.
+      Click the button below — this link expires in {RESET_EXPIRY_MINUTES} minutes.
+    </p>
+    <div style="text-align:center;margin:32px 0;">
+      <a href="{reset_url}"
+         style="background:#16a34a;color:#fff;text-decoration:none;
+                padding:14px 32px;border-radius:8px;font-weight:600;
+                font-size:15px;display:inline-block;">
+        Reset Password
+      </a>
+    </div>
+    <p style="color:#9ca3af;font-size:13px;margin:24px 0 0;text-align:center;">
+      If you didn't request this, you can safely ignore this email.<br>
+      Your password won't change until you click the button above.
+    </p>
+    <hr style="border:none;border-top:1px solid #f3f4f6;margin:24px 0;">
+    <p style="color:#d1d5db;font-size:11px;text-align:center;margin:0;">
+      Moeving Sales Intelligence · Secured with JWT
+    </p>
+  </div>
+</body>
+</html>""",
+        })
+    except Exception as e:
+        # Don't expose email errors to the client
+        print(f"[EMAIL ERROR] {e}")
+
+
+# ── Pydantic schemas ───────────────────────────────────────────────────────────
+
 class SignupRequest(BaseModel):
     name: str
     email: str
@@ -68,17 +146,20 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-def _user_response(user: User, token: str) -> dict:
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": {"id": user.id, "name": user.name, "email": user.email},
-    }
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+# ── Auth endpoints ─────────────────────────────────────────────────────────────
 
 @app.post("/signup", tags=["auth"])
 def signup(req: SignupRequest, db: Session = Depends(get_db)):
     req.email = req.email.lower().strip()
-    req.name = req.name.strip()
+    req.name  = req.name.strip()
     if not req.name:
         raise HTTPException(status_code=400, detail="Name is required.")
     if not req.email or "@" not in req.email:
@@ -93,6 +174,7 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
     db.refresh(user)
     return _user_response(user, create_access_token({"sub": user.email}))
 
+
 @app.post("/login", tags=["auth"])
 def login(req: LoginRequest, db: Session = Depends(get_db)):
     req.email = req.email.lower().strip()
@@ -101,9 +183,69 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
     return _user_response(user, create_access_token({"sub": user.email}))
 
+
 @app.get("/me", tags=["auth"])
 def me(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "name": current_user.name, "email": current_user.email}
+
+
+@app.post("/forgot-password", tags=["auth"])
+def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Generate a single-use reset token and email it.
+    Always returns 200 to prevent email enumeration.
+    """
+    email = req.email.lower().strip()
+    user  = db.query(User).filter(User.email == email).first()
+
+    if user:
+        # Invalidate any existing unused tokens for this user
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used == False,
+        ).update({"used": True})
+        db.commit()
+
+        token      = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(minutes=RESET_EXPIRY_MINUTES)
+        db.add(PasswordResetToken(user_id=user.id, token=token, expires_at=expires_at))
+        db.commit()
+
+        reset_url = f"{FRONTEND_URL.rstrip('/')}/reset-password?token={token}"
+        _send_reset_email(user.email, user.name, reset_url)
+
+    return {"message": "If an account with that email exists, a reset link has been sent."}
+
+
+@app.post("/reset-password", tags=["auth"])
+def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Verify the token and update the user's password."""
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+    record = db.query(PasswordResetToken).filter(
+        PasswordResetToken.token == req.token,
+        PasswordResetToken.used  == False,
+    ).first()
+
+    if not record or record.expires_at < datetime.utcnow():
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link is invalid or has expired. Please request a new one.",
+        )
+
+    user = db.query(User).filter(User.id == record.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found.")
+
+    user.hashed_password = get_password_hash(req.new_password)
+    record.used = True
+    db.commit()
+
+    return {"message": "Password updated successfully. You can now sign in."}
+
+
+# ── Dashboard endpoints ────────────────────────────────────────────────────────
 
 @app.post("/api/upload", tags=["dashboard"])
 async def upload_files(
@@ -135,7 +277,7 @@ async def upload_files(
     existing = db.query(UserDashboard).filter(UserDashboard.user_id == current_user.id).first()
     if existing:
         existing.dashboard_json = serialized
-        existing.uploaded_at = now
+        existing.uploaded_at    = now
     else:
         db.add(UserDashboard(user_id=current_user.id, dashboard_json=serialized, uploaded_at=now))
     db.commit()
@@ -143,6 +285,7 @@ async def upload_files(
     result["uploaded_at"] = now.isoformat() + "Z"
     result["user"] = {"name": current_user.name, "email": current_user.email}
     return result
+
 
 @app.get("/api/dashboard", tags=["dashboard"])
 def get_last_dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -154,6 +297,7 @@ def get_last_dashboard(current_user: User = Depends(get_current_user), db: Sessi
     result["user"] = {"name": current_user.name, "email": current_user.email}
     return result
 
+
 @app.delete("/api/dashboard", tags=["dashboard"])
 def clear_dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     record = db.query(UserDashboard).filter(UserDashboard.user_id == current_user.id).first()
@@ -162,6 +306,9 @@ def clear_dashboard(current_user: User = Depends(get_current_user), db: Session 
         db.commit()
     return {"message": "Dashboard data cleared."}
 
+
+# ── System ─────────────────────────────────────────────────────────────────────
+
 @app.get("/health", tags=["system"])
 def health():
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "2.1.0"}
