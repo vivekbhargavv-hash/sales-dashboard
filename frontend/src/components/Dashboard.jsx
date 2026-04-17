@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
-import { UploadCloud, Sun, Moon, LogOut, User, Clock } from 'lucide-react'
-import { useTheme, STAGE_ORDER, sortByStageOrder } from '../ThemeContext'
+import { UploadCloud, Sun, Moon, LogOut, User, Clock, Truck, TrendingUp } from 'lucide-react'
+import { useTheme, STAGE_ORDER, sortByStageOrder, formatFleet, formatNum } from '../ThemeContext'
 import Filters from './Filters'
 import KPICards from './KPICards'
 import StageSummary from './StageSummary'
@@ -12,14 +12,70 @@ import TopClients from './TopClients'
 import ConcentrationRisk from './ConcentrationRisk'
 import DrilldownPivot from './DrilldownPivot'
 import CityHeatmap from './CityHeatmap'
+import MonthlyClosures from './MonthlyClosures'
+import AllRecords from './AllRecords'
 
 const TABS = [
-  { id: 'overview',    label: 'Overview' },
-  { id: 'pipeline',    label: 'Pipeline Health' },
-  { id: 'conversion',  label: 'Conversion & Velocity' },
-  { id: 'clients',     label: 'Client Insights' },
-  { id: 'geo',         label: 'Geographic & Fleet' },
+  { id: 'overview',         label: 'Overview' },
+  { id: 'pipeline',         label: 'Pipeline Health' },
+  { id: 'conversion',       label: 'Conversion & Velocity' },
+  { id: 'clients',          label: 'Client Insights' },
+  { id: 'geo',              label: 'Geographic & Fleet' },
+  { id: 'monthly_closures', label: 'Monthly Closures' },
+  { id: 'all_records',      label: 'All Records' },
 ]
+
+// Deployment stage colours (pill badges)
+const DEPL_COLORS = {
+  'Pending Deployment': { bg: 'bg-yellow-500/15', text: 'text-yellow-500', border: 'border-yellow-500/30' },
+  'Partially Deployed': { bg: 'bg-blue-500/15',   text: 'text-blue-400',   border: 'border-blue-500/30'   },
+  'Deployed':           { bg: 'bg-green-500/15',  text: 'text-green-500',  border: 'border-green-500/30'  },
+  'On Hold':            { bg: 'bg-orange-500/15', text: 'text-orange-400', border: 'border-orange-500/30' },
+  'Lost':               { bg: 'bg-red-500/15',    text: 'text-red-400',    border: 'border-red-500/30'    },
+}
+
+function DeploymentPipelineSection({ deploymentSummary, deploymentEfficiency }) {
+  const { isDark, tw } = useTheme()
+  if (!deploymentSummary || deploymentSummary.length === 0) return null
+
+  return (
+    <div className={`${tw.card} rounded-2xl p-5`}>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Truck className="w-5 h-5 text-green-500" />
+          <h2 className={`font-semibold text-base ${tw.textPrimary}`}>Deployment Pipeline</h2>
+        </div>
+        {/* Deployment Efficiency KPI */}
+        <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border ${
+          isDark ? 'border-green-500/30 bg-green-500/10' : 'border-green-300 bg-green-50'
+        }`}>
+          <TrendingUp className="w-4 h-4 text-green-500" />
+          <span className={`text-xs font-medium ${tw.textSecondary}`}>Deployment Efficiency</span>
+          <span className="text-green-500 font-bold text-sm">{deploymentEfficiency ?? 0}%</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {deploymentSummary.map(item => {
+          const colors = DEPL_COLORS[item.stage] || { bg: 'bg-slate-500/15', text: 'text-slate-400', border: 'border-slate-500/30' }
+          return (
+            <div key={item.stage}
+              className={`rounded-xl border p-3 flex flex-col gap-1 ${colors.bg} ${colors.border}`}>
+              <span className={`text-xs font-semibold truncate ${colors.text}`}>{item.stage}</span>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className={`text-xl font-bold ${tw.textPrimary}`}>{item.count}</span>
+                <span className={`text-xs ${tw.textMuted}`}>opps</span>
+              </div>
+              <span className={`text-xs ${tw.textSecondary}`}>
+                {formatFleet(item.fleet)} vehicles
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function applyFilters(data, filters) {
   if (!data) return data
@@ -28,21 +84,18 @@ function applyFilters(data, filters) {
   if (!hasFilters) return data
 
   const table = (data.summary_table || []).filter(row => {
-    if (cities.length     && !cities.includes(row.city))             return false
-    if (stages.length     && !stages.includes(row.stage))            return false
+    if (cities.length     && !cities.includes(row.city))                 return false
+    if (stages.length     && !stages.includes(row.stage))                return false
     if (categories.length && !categories.includes(row.vehicle_category)) return false
-    if (assignees.length  && !assignees.includes(row.assigned_to))   return false
+    if (assignees.length  && !assignees.includes(row.assigned_to))       return false
     return true
   })
 
-  const notLost    = table.filter(r => r.stage !== 'Closed Lost')
-  const closedWon  = table.filter(r => r.stage === 'Closed Won')
-  const pendingDepl = table.filter(r => r.stage === 'Pending Deployment')
-
+  const notLost     = table.filter(r => r.stage !== 'Closed Lost')
+  const closedWon   = table.filter(r => r.stage === 'Closed Won')
   const sum = (arr, field) => arr.reduce((s, r) => s + (parseFloat(r[field]) || 0), 0)
   const totalPipeline = sum(notLost, 'deal_size')
   const totalCW       = sum(closedWon, 'deal_size')
-  const totalPD       = sum(pendingDepl, 'deal_size')
   const totalOpps     = table.length
   const posDeals      = table.filter(r => parseFloat(r.deal_size) > 0)
   const avgDeal       = posDeals.length ? sum(posDeals, 'deal_size') / posDeals.length : 0
@@ -54,7 +107,9 @@ function applyFilters(data, filters) {
     stageMap[r.stage].count++
     stageMap[r.stage].total_deal_size += parseFloat(r.deal_size) || 0
   })
-  const stageSummary = sortByStageOrder(Object.entries(stageMap).map(([stage, v]) => ({ stage, ...v })))
+  const stageSummary = sortByStageOrder(
+    Object.entries(stageMap).map(([stage, v]) => ({ stage, ...v }))
+  )
 
   const vcMap = {}
   table.forEach(r => {
@@ -65,17 +120,24 @@ function applyFilters(data, filters) {
   })
   const totalDS = sum(table, 'deal_size')
   const vehicleCategory = Object.entries(vcMap)
-    .map(([k, v]) => ({ vehicle_category: k, ...v, pct: totalDS > 0 ? v.total_deal_size / totalDS * 100 : 0 }))
+    .map(([k, v]) => ({
+      vehicle_category: k, ...v,
+      pct: totalDS > 0 ? v.total_deal_size / totalDS * 100 : 0
+    }))
     .sort((a, b) => b.total_deal_size - a.total_deal_size)
 
   const clientMap = {}
   notLost.forEach(r => {
-    if (!clientMap[r.client_name]) clientMap[r.client_name] = { total_deal_size: 0, count: 0 }
-    clientMap[r.client_name].total_deal_size += parseFloat(r.deal_size) || 0
-    clientMap[r.client_name].count++
+    const key = r.org_name?.trim() || r.client_name || 'Unknown'
+    if (!clientMap[key]) clientMap[key] = { total_deal_size: 0, count: 0 }
+    clientMap[key].total_deal_size += parseFloat(r.deal_size) || 0
+    clientMap[key].count++
   })
   const topClients = Object.entries(clientMap)
-    .map(([name, v]) => ({ client_name: name, ...v, avg_deal_size: v.count ? v.total_deal_size / v.count : 0 }))
+    .map(([name, v]) => ({
+      client_name: name, ...v,
+      avg_deal_size: v.count ? v.total_deal_size / v.count : 0
+    }))
     .sort((a, b) => b.total_deal_size - a.total_deal_size)
     .slice(0, 10)
 
@@ -98,12 +160,18 @@ function applyFilters(data, filters) {
   return {
     ...data,
     summary_table: table,
-    kpis: { ...data.kpis, total_pipeline_value: totalPipeline, total_closed_won: totalCW,
-      total_pending_deployment: totalPD, total_opportunities: totalOpps, avg_deal_size: avgDeal, win_rate: winRate },
-    stage_summary: stageSummary,
+    kpis: {
+      ...data.kpis,
+      total_pipeline_value:    totalPipeline,
+      total_closed_won:        totalCW,
+      total_opportunities:     totalOpps,
+      avg_deal_size:           avgDeal,
+      win_rate:                winRate,
+    },
+    stage_summary:    stageSummary,
     vehicle_category: vehicleCategory,
-    top_clients: topClients,
-    city_heatmap: cityHeatmap,
+    top_clients:      topClients,
+    city_heatmap:     cityHeatmap,
     concentration_risk: {
       top5_pct:     nlTotal > 0 ? top5val  / nlTotal * 100 : 0,
       top10_pct:    nlTotal > 0 ? top10val / nlTotal * 100 : 0,
@@ -129,15 +197,77 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
   const filteredData = useMemo(() => applyFilters(data, filters), [data, filters])
   const uploadedAt   = formatUploadedAt(data?.uploaded_at)
 
+  // Tabs that should NOT show the filter bar
+  const noFilterTabs = new Set(['monthly_closures', 'all_records'])
+
   const renderTab = () => {
     const d = filteredData
     switch (activeTab) {
-      case 'overview':   return <div className="space-y-6"><KPICards kpis={d.kpis} /><div className="grid grid-cols-1 xl:grid-cols-2 gap-6"><StageSummary stageSummary={d.stage_summary} /><VehicleCategory vehicleCategory={d.vehicle_category} /></div></div>
-      case 'pipeline':   return <div className="space-y-6"><PipelineForecast forecast={d.forecast} /><StageSummary stageSummary={d.stage_summary} /></div>
-      case 'conversion': return <div className="space-y-6"><SalesFunnel funnel={d.funnel} /><MoMPerformance momPerformance={d.mom_performance} velocity={d.velocity} /></div>
-      case 'clients':    return <div className="space-y-6"><TopClients topClients={d.top_clients} /><div className="grid grid-cols-1 xl:grid-cols-2 gap-6"><ConcentrationRisk concentrationRisk={d.concentration_risk} /><DrilldownPivot drilldown={d.drilldown} /></div></div>
-      case 'geo':        return <div className="space-y-6"><CityHeatmap cityHeatmap={d.city_heatmap} /><VehicleCategory vehicleCategory={d.vehicle_category} /></div>
-      default:           return null
+      case 'overview':
+        return (
+          <div className="space-y-6">
+            <KPICards kpis={d.kpis} />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <StageSummary stageSummary={d.stage_summary} />
+              <VehicleCategory vehicleCategory={d.vehicle_category} />
+            </div>
+            <DeploymentPipelineSection
+              deploymentSummary={data.deployment_summary}
+              deploymentEfficiency={data.deployment_efficiency}
+            />
+          </div>
+        )
+
+      case 'pipeline':
+        return (
+          <div className="space-y-6">
+            <PipelineForecast forecast={d.forecast} />
+            <StageSummary stageSummary={d.stage_summary} />
+          </div>
+        )
+
+      case 'conversion':
+        return (
+          <div className="space-y-6">
+            <SalesFunnel funnel={d.funnel} />
+            <MoMPerformance momPerformance={d.mom_performance} velocity={d.velocity} />
+          </div>
+        )
+
+      case 'clients':
+        return (
+          <div className="space-y-6">
+            <TopClients topClients={d.top_clients} />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <ConcentrationRisk concentrationRisk={d.concentration_risk} />
+              <DrilldownPivot drilldown={d.drilldown} />
+            </div>
+          </div>
+        )
+
+      case 'geo':
+        return (
+          <div className="space-y-6">
+            <CityHeatmap cityHeatmap={d.city_heatmap} />
+            <VehicleCategory vehicleCategory={d.vehicle_category} />
+          </div>
+        )
+
+      case 'monthly_closures':
+        return (
+          <MonthlyClosures
+            monthlyClosures={data.monthly_closures}
+            monthlySummary={data.monthly_summary}
+          />
+        )
+
+      case 'all_records':
+        return (
+          <AllRecords combinedRecords={data.combined_records} />
+        )
+
+      default:
+        return null
     }
   }
 
@@ -155,7 +285,7 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
           <div>
             <h1 className={`font-bold text-sm leading-tight ${tw.textPrimary}`}>Moeving Sales Intelligence</h1>
             <div className={`flex items-center gap-3 text-xs ${tw.textSecondary}`}>
-              <span>{data?.summary_table?.length || 0} records</span>
+              <span>{data?.summary_table?.length || 0} deals · {data?.combined_records?.length || 0} total records</span>
               {uploadedAt && (
                 <span className="flex items-center gap-1">
                   <Clock className="w-3 h-3" />Updated {uploadedAt}
@@ -166,14 +296,11 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* User badge */}
           {user && (
             <span className={`hidden lg:flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg ${isDark ? 'bg-slate-700 text-slate-300' : 'bg-gray-100 text-gray-600'}`}>
               <User className="w-3 h-3" />{user.name}
             </span>
           )}
-
-          {/* Theme toggle */}
           <button onClick={toggleTheme}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
               isDark ? 'border-slate-600 bg-slate-700 text-slate-200 hover:bg-slate-600' : 'border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -181,15 +308,11 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
             {isDark ? <Sun className="w-4 h-4 text-yellow-400" /> : <Moon className="w-4 h-4 text-slate-500" />}
             <span className="hidden sm:inline">{isDark ? 'Light' : 'Dark'}</span>
           </button>
-
-          {/* Upload new */}
           <button onClick={onReset}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${tw.uploadReset}`}>
             <UploadCloud className="w-4 h-4" />
             <span className="hidden sm:inline">New Upload</span>
           </button>
-
-          {/* Logout */}
           <button onClick={onLogout}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm text-red-500 border-red-500/30 hover:bg-red-500/10 transition-colors">
             <LogOut className="w-4 h-4" />
@@ -199,7 +322,7 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
       </header>
 
       {/* Nav Tabs */}
-      <nav className={`${tw.nav} px-6 flex gap-1 flex-shrink-0`}>
+      <nav className={`${tw.nav} px-6 flex gap-1 flex-shrink-0 overflow-x-auto`}>
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             className={`px-4 py-3 text-sm font-medium transition-all border-b-2 -mb-px whitespace-nowrap ${
@@ -210,8 +333,10 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
         ))}
       </nav>
 
-      {/* Filters */}
-      <Filters data={data} filters={filters} onFiltersChange={setFilters} />
+      {/* Filters — hidden on Monthly Closures and All Records tabs */}
+      {!noFilterTabs.has(activeTab) && (
+        <Filters data={data} filters={filters} onFiltersChange={setFilters} />
+      )}
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto p-6">

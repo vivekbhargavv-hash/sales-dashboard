@@ -31,6 +31,10 @@ STAGE_ORDER = [
     'Contracting', 'Closed Won', 'Pending Deployment', 'Dormant', 'Closed Lost'
 ]
 
+PROJECT_STATUS_ORDER = [
+    'Pending Deployment', 'Partially Deployed', 'Deployed', 'On Hold', 'Lost'
+]
+
 
 def get_vehicle_category(vtype):
     if not isinstance(vtype, str):
@@ -114,115 +118,122 @@ def safe_int(val, default=0):
         return default
 
 
+def _fmt_date(ts):
+    """Format a Timestamp as 'YYYY-MM-DD HH:MM', or '' if null."""
+    if isinstance(ts, pd.Timestamp):
+        return ts.strftime('%Y-%m-%d %H:%M')
+    return ''
+
+
+def _date_ts(ts):
+    """Return a Timestamp for sorting; NaT / None maps to epoch 0."""
+    if isinstance(ts, pd.Timestamp) and not pd.isna(ts):
+        return ts
+    return pd.Timestamp(0)
+
+
 def process_csvs(deals_bytes, projects_bytes):
     # ─── Read CSVs ────────────────────────────────────────────────────────────
-    deals_df = pd.read_csv(io.BytesIO(deals_bytes))
-    projects_df = pd.read_csv(io.BytesIO(projects_bytes))
+    deals_raw = pd.read_csv(io.BytesIO(deals_bytes))
+    projects_raw = pd.read_csv(io.BytesIO(projects_bytes))
 
     # ─── Normalize Deals ──────────────────────────────────────────────────────
     deals_rename = {}
     col_map_deals = {
-        'CRM ID': 'crm_id',
-        'Deal Name': 'client_name',
+        'Deal Name': 'deal_name',
         'Organization Name': 'org_name',
         'Sales Stage': 'stage',
         'City': 'city',
         'Vehicle Type': 'vehicle_type',
-        'Driver type': 'driver_type',
-        'Charging scope': 'charging_scope',
         'Deal Size': 'deal_size',
         'Assigned To': 'assigned_to',
-        'Created Time': 'created_date',
         'Close Date': 'closed_date',
+        'Modified Time': 'modified_date',
+        'Created Time': 'created_date',
     }
     for orig, new in col_map_deals.items():
-        if orig in deals_df.columns:
+        if orig in deals_raw.columns:
             deals_rename[orig] = new
-    deals_df = deals_df.rename(columns=deals_rename)
-    deals_df['source'] = 'deal'
+    df = deals_raw.rename(columns=deals_rename).copy()
 
-    # Ensure all expected columns exist
-    for col in ['crm_id', 'client_name', 'org_name', 'stage', 'city', 'vehicle_type',
-                'driver_type', 'charging_scope', 'deal_size', 'assigned_to',
-                'created_date', 'closed_date']:
-        if col not in deals_df.columns:
-            deals_df[col] = None
+    # Ensure all expected deal columns exist
+    for col in ['deal_name', 'org_name', 'stage', 'city', 'vehicle_type',
+                'deal_size', 'assigned_to', 'closed_date', 'modified_date', 'created_date']:
+        if col not in df.columns:
+            df[col] = None
 
-    # ─── Normalize Projects ───────────────────────────────────────────────────
-    col_map_projects = {
-        'CRM ID': 'crm_id',
-        'Project Name': 'client_name',
-        'Fleet Size': 'deal_size',
-        'City': 'city',
-        'Vehicle Type': 'vehicle_type',
-    }
-    projects_rename = {}
-    for orig, new in col_map_projects.items():
-        if orig in projects_df.columns:
-            projects_rename[orig] = new
-    projects_df = projects_df.rename(columns=projects_rename)
-
-    projects_df['stage'] = 'Pending Deployment'
-    projects_df['source'] = 'project'
-    projects_df['org_name'] = ''
-    projects_df['assigned_to'] = ''
-    projects_df['created_date'] = None
-    projects_df['closed_date'] = None
-    projects_df['driver_type'] = None
-    projects_df['charging_scope'] = None
-
-    for col in ['crm_id', 'client_name', 'deal_size', 'city', 'vehicle_type']:
-        if col not in projects_df.columns:
-            projects_df[col] = None
-
-    # ─── Select unified columns ───────────────────────────────────────────────
-    COLS = ['crm_id', 'client_name', 'org_name', 'stage', 'city', 'vehicle_type',
-            'driver_type', 'charging_scope', 'deal_size', 'assigned_to',
-            'created_date', 'closed_date', 'source']
-
-    deals_df = deals_df[[c for c in COLS if c in deals_df.columns]].copy()
-    projects_df = projects_df[[c for c in COLS if c in projects_df.columns]].copy()
-
-    # Add missing cols
-    for col in COLS:
-        if col not in deals_df.columns:
-            deals_df[col] = None
-        if col not in projects_df.columns:
-            projects_df[col] = None
-
-    # ─── Concat ───────────────────────────────────────────────────────────────
-    df = pd.concat([deals_df[COLS], projects_df[COLS]], ignore_index=True)
-
-    # ─── Parse deal_size ──────────────────────────────────────────────────────
+    # Parse numeric / date columns for deals
     df['deal_size'] = df['deal_size'].apply(parse_deal_size)
-
-    # ─── Parse dates ──────────────────────────────────────────────────────────
     df['created_date'] = df['created_date'].apply(parse_date)
     df['closed_date'] = df['closed_date'].apply(parse_date)
+    df['modified_date'] = df['modified_date'].apply(parse_date)
 
-    # ─── Add vehicle_category ─────────────────────────────────────────────────
+    # Derive client_name: prefer org_name, fall back to deal_name
+    df['org_name'] = df['org_name'].fillna('').astype(str).str.strip()
+    df['deal_name'] = df['deal_name'].fillna('').astype(str).str.strip()
+    df['client_name'] = df['org_name'].where(df['org_name'] != '', df['deal_name'])
+    df['client_name'] = df['client_name'].replace('', 'Unknown').fillna('Unknown')
+
+    # Add vehicle category
     df['vehicle_category'] = df['vehicle_type'].apply(get_vehicle_category)
 
-    # ─── Fill nulls ───────────────────────────────────────────────────────────
-    df['client_name'] = df['client_name'].fillna('Unknown')
+    # Fill remaining nulls
     df['city'] = df['city'].fillna('Unknown')
     df['vehicle_type'] = df['vehicle_type'].fillna('Unknown')
     df['stage'] = df['stage'].fillna('Unknown')
     df['deal_size'] = df['deal_size'].fillna(0)
+    df['assigned_to'] = df['assigned_to'].fillna('')
 
-    # ─── Drop exact duplicates on (crm_id, source) ────────────────────────────
-    df = df.drop_duplicates(subset=['crm_id', 'source'])
     df = df.reset_index(drop=True)
 
-    # ─── Computed subsets ─────────────────────────────────────────────────────
+    # ─── Normalize Projects ───────────────────────────────────────────────────
+    proj_rename = {}
+    col_map_projects = {
+        'Project Name': 'project_name',
+        'Status': 'status',
+        'City': 'city',
+        'Vehicle Type': 'vehicle_type',
+        'Fleet Size': 'fleet_size',
+        'Assigned To': 'assigned_to',
+        'Modified Time': 'modified_date',
+        'Created Time': 'created_date',
+        'Target End Date': 'target_end_date',
+        'Is Converted From Deal': 'is_converted_from_deal',
+    }
+    for orig, new in col_map_projects.items():
+        if orig in projects_raw.columns:
+            proj_rename[orig] = new
+    proj = projects_raw.rename(columns=proj_rename).copy()
+
+    # Ensure all expected project columns exist
+    for col in ['project_name', 'status', 'city', 'vehicle_type', 'fleet_size',
+                'assigned_to', 'modified_date', 'created_date']:
+        if col not in proj.columns:
+            proj[col] = None
+
+    proj['fleet_size'] = proj['fleet_size'].apply(parse_deal_size)
+    proj['created_date'] = proj['created_date'].apply(parse_date)
+    proj['modified_date'] = proj['modified_date'].apply(parse_date)
+
+    proj['project_name'] = proj['project_name'].fillna('').astype(str).str.strip()
+    proj['status'] = proj['status'].fillna('Unknown').astype(str).str.strip()
+    proj['city'] = proj['city'].fillna('Unknown')
+    proj['vehicle_type'] = proj['vehicle_type'].fillna('Unknown')
+    proj['fleet_size'] = proj['fleet_size'].fillna(0)
+    proj['assigned_to'] = proj['assigned_to'].fillna('')
+
+    proj = proj.reset_index(drop=True)
+
+    # ─── Computed deal subsets ────────────────────────────────────────────────
     closed_won = df[df['stage'] == 'Closed Won']
     not_lost = df[df['stage'] != 'Closed Lost']
-    pending_depl = df[df['stage'] == 'Pending Deployment']
 
-    # ─── KPIs ─────────────────────────────────────────────────────────────────
+    # ─── KPIs (deals only) ────────────────────────────────────────────────────
     pipeline_value = safe_float(not_lost['deal_size'].sum())
     closed_won_value = safe_float(closed_won['deal_size'].sum())
-    pending_value = safe_float(pending_depl['deal_size'].sum())
+    # pending deployment vehicles now come from proj
+    pending_depl_proj = proj[proj['status'] == 'Pending Deployment']
+    pending_value = safe_float(pending_depl_proj['fleet_size'].sum())
     total_opps = len(df)
     positive_deals = df[df['deal_size'] > 0]['deal_size']
     avg_deal_size = safe_float(positive_deals.mean() if len(positive_deals) > 0 else 0)
@@ -247,7 +258,7 @@ def process_csvs(deals_bytes, projects_bytes):
         'pipeline_coverage_ratio': pipeline_coverage,
     }
 
-    # ─── Stage Summary ────────────────────────────────────────────────────────
+    # ─── Stage Summary (deals only) ───────────────────────────────────────────
     stage_grp = df.groupby('stage').agg(
         count=('stage', 'count'),
         total_deal_size=('deal_size', 'sum')
@@ -266,8 +277,8 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in stage_grp.iterrows()
     ]
 
-    # ─── Advanced Metrics ─────────────────────────────────────────────────────
-    adv_stages = ['Negotiation', 'Contracting', 'Closed Won', 'Pending Deployment']
+    # ─── Advanced Metrics (deals only) ───────────────────────────────────────
+    adv_stages = ['Negotiation', 'Contracting', 'Closed Won']
     adv_df = df[df['stage'].isin(adv_stages)]
     adv_total = safe_float(adv_df['deal_size'].sum())
     adv_grp = adv_df.groupby('stage').agg(
@@ -287,7 +298,7 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in adv_grp.iterrows()
     ]
 
-    # ─── Top Clients ──────────────────────────────────────────────────────────
+    # ─── Top Clients (deals only, uses org_name / deal_name) ─────────────────
     top_clients_df = not_lost.groupby('client_name').agg(
         total_deal_size=('deal_size', 'sum'),
         count=('deal_size', 'count'),
@@ -304,9 +315,9 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in top_clients_df.iterrows()
     ]
 
-    # ─── Funnel ───────────────────────────────────────────────────────────────
+    # ─── Funnel (deals only) ──────────────────────────────────────────────────
     funnel_stages = ['New', 'Requirements Gathering', 'Proposal Sent',
-                     'Negotiation', 'Contracting', 'Closed Won', 'Pending Deployment']
+                     'Negotiation', 'Contracting', 'Closed Won']
     funnel_data = []
     prev_count = None
     for stage in funnel_stages:
@@ -324,7 +335,7 @@ def process_csvs(deals_bytes, projects_bytes):
         })
         prev_count = cnt
 
-    # ─── Velocity ─────────────────────────────────────────────────────────────
+    # ─── Velocity (deals only) ────────────────────────────────────────────────
     cw_dated = closed_won[
         closed_won['created_date'].notna() &
         closed_won['closed_date'].notna()
@@ -346,7 +357,7 @@ def process_csvs(deals_bytes, projects_bytes):
         'sales_velocity': sales_velocity,
     }
 
-    # ─── MoM Performance ─────────────────────────────────────────────────────
+    # ─── MoM Performance (deals only) ────────────────────────────────────────
     cw_with_date = closed_won[closed_won['closed_date'].notna()].copy()
     mom_performance = []
     if len(cw_with_date) > 0:
@@ -370,10 +381,11 @@ def process_csvs(deals_bytes, projects_bytes):
             })
             prev_val = cur_val
 
-    # ─── Forecast ─────────────────────────────────────────────────────────────
+    # ─── Forecast (deals only) ────────────────────────────────────────────────
     forecast_stages = []
     total_weighted = 0.0
     for stage, prob in STAGE_PROBABILITY.items():
+        # Only apply to deal stages that exist in df
         stage_rows = df[df['stage'] == stage]
         cnt = len(stage_rows)
         raw = safe_float(stage_rows['deal_size'].sum())
@@ -398,8 +410,8 @@ def process_csvs(deals_bytes, projects_bytes):
         'expected_revenue': expected_revenue,
     }
 
-    # ─── City Heatmap ─────────────────────────────────────────────────────────
-    city_df = df[df['stage'].isin(['Closed Won', 'Pending Deployment'])]
+    # ─── City Heatmap (deals: Closed Won only) ────────────────────────────────
+    city_df = df[df['stage'] == 'Closed Won']
     city_grp = city_df.groupby('city').agg(
         total_deal_size=('deal_size', 'sum'),
         count=('deal_size', 'count')
@@ -414,7 +426,7 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in city_grp.iterrows()
     ]
 
-    # ─── Vehicle Category ─────────────────────────────────────────────────────
+    # ─── Vehicle Category (deals only) ───────────────────────────────────────
     vc_grp = df.groupby('vehicle_category').agg(
         total_deal_size=('deal_size', 'sum'),
         count=('deal_size', 'count')
@@ -431,7 +443,7 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in vc_grp.iterrows()
     ]
 
-    # ─── Concentration Risk ───────────────────────────────────────────────────
+    # ─── Concentration Risk (deals only, uses org_name / deal_name) ──────────
     nl_client = not_lost.groupby('client_name').agg(
         value=('deal_size', 'sum')
     ).reset_index().sort_values('value', ascending=False)
@@ -463,7 +475,7 @@ def process_csvs(deals_bytes, projects_bytes):
         ]
     }
 
-    # ─── Drilldown ────────────────────────────────────────────────────────────
+    # ─── Drilldown (deals only) ───────────────────────────────────────────────
     drill_grp = df.groupby(['stage', 'city', 'client_name']).agg(
         count=('deal_size', 'count'),
         total_deal_size=('deal_size', 'sum')
@@ -480,7 +492,7 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in drill_grp.iterrows()
     ]
 
-    # ─── Summary Table ────────────────────────────────────────────────────────
+    # ─── Summary Table (deals only) ───────────────────────────────────────────
     display_df = df.copy()
     display_df['created_date'] = display_df['created_date'].apply(
         lambda x: x.strftime('%Y-%m-%d') if isinstance(x, pd.Timestamp) else ''
@@ -488,9 +500,119 @@ def process_csvs(deals_bytes, projects_bytes):
     display_df['closed_date'] = display_df['closed_date'].apply(
         lambda x: x.strftime('%Y-%m-%d') if isinstance(x, pd.Timestamp) else ''
     )
+    display_df['modified_date'] = display_df['modified_date'].apply(
+        lambda x: x.strftime('%Y-%m-%d %H:%M') if isinstance(x, pd.Timestamp) else ''
+    )
     display_df = display_df.fillna('')
-
     summary_table = display_df.to_dict(orient='records')
+
+    # ─── Deployment Summary (projects only) ───────────────────────────────────
+    depl_grp = proj.groupby('status').agg(
+        count=('status', 'count'),
+        fleet=('fleet_size', 'sum')
+    ).reset_index()
+
+    status_order_map = {s: i for i, s in enumerate(PROJECT_STATUS_ORDER)}
+    depl_grp['_order'] = depl_grp['status'].map(
+        lambda s: status_order_map.get(s, len(PROJECT_STATUS_ORDER))
+    )
+    depl_grp = depl_grp.sort_values('_order').drop(columns='_order')
+
+    deployment_summary = [
+        {
+            'stage': row['status'],
+            'count': safe_int(row['count']),
+            'fleet': safe_float(row['fleet'])
+        }
+        for _, row in depl_grp.iterrows()
+    ]
+
+    # ─── Deployment Efficiency (projects only) ────────────────────────────────
+    deployed_fleet = safe_float(proj.loc[proj['status'] == 'Deployed', 'fleet_size'].sum())
+    pending_fleet = safe_float(proj.loc[proj['status'] == 'Pending Deployment', 'fleet_size'].sum())
+    denom = pending_fleet + deployed_fleet
+    deployment_efficiency = round(deployed_fleet / denom * 100, 1) if denom > 0 else 0.0
+
+    # ─── Monthly Closures (deals only: Closed Won with Close Date) ────────────
+    cw_closed = closed_won[closed_won['closed_date'].notna()].copy()
+    monthly_closures = []
+    if len(cw_closed) > 0:
+        cw_closed['month'] = cw_closed['closed_date'].dt.to_period('M').astype(str)
+        # Use org_name as client, fall back to deal_name if org_name empty
+        cw_closed = cw_closed.copy()
+        mc_grp = cw_closed.groupby(
+            ['month', 'client_name', 'assigned_to'],
+            dropna=False
+        ).agg(vehicles=('deal_size', 'sum')).reset_index()
+        mc_grp = mc_grp.sort_values(['month', 'client_name'])
+        monthly_closures = [
+            {
+                'month': row['month'],
+                'client': row['client_name'],
+                'spoc': row['assigned_to'],
+                'vehicles': safe_float(row['vehicles'])
+            }
+            for _, row in mc_grp.iterrows()
+        ]
+
+    # ─── Monthly Summary (from monthly_closures) ──────────────────────────────
+    monthly_summary = []
+    if monthly_closures:
+        ms_df = pd.DataFrame(monthly_closures)
+        ms_grp = ms_df.groupby('month').agg(
+            total_deals=('client', 'count'),
+            total_vehicles=('vehicles', 'sum')
+        ).reset_index().sort_values('month')
+        monthly_summary = [
+            {
+                'month': row['month'],
+                'total_deals': safe_int(row['total_deals']),
+                'total_vehicles': safe_float(row['total_vehicles'])
+            }
+            for _, row in ms_grp.iterrows()
+        ]
+
+    # ─── Combined Records (deals + projects) ──────────────────────────────────
+    deal_records = []
+    for _, row in df.iterrows():
+        client = row['org_name'] if row['org_name'] != '' else row['deal_name']
+        if not client:
+            client = row['deal_name'] or ''
+        ts = row['modified_date']
+        deal_records.append({
+            'type': 'Deal',
+            'name': row['deal_name'],
+            'client': client,
+            'stage': row['stage'],
+            'city': row['city'],
+            'vehicle': row['vehicle_type'],
+            'fleet': safe_float(row['deal_size']),
+            'spoc': row['assigned_to'],
+            'date': _fmt_date(ts),
+            'date_ts': _date_ts(ts),
+        })
+
+    proj_records = []
+    for _, row in proj.iterrows():
+        ts = row['modified_date']
+        proj_records.append({
+            'type': 'Project',
+            'name': row['project_name'],
+            'client': row['project_name'],
+            'stage': row['status'],
+            'city': row['city'],
+            'vehicle': row['vehicle_type'],
+            'fleet': safe_float(row['fleet_size']),
+            'spoc': row['assigned_to'],
+            'date': _fmt_date(ts),
+            'date_ts': _date_ts(ts),
+        })
+
+    combined_all = deal_records + proj_records
+    combined_all.sort(key=lambda r: r['date_ts'], reverse=True)
+    for r in combined_all:
+        del r['date_ts']
+    combined_records = combined_all
 
     return {
         'kpis': kpis,
@@ -506,4 +628,9 @@ def process_csvs(deals_bytes, projects_bytes):
         'concentration_risk': concentration_risk,
         'drilldown': drilldown,
         'summary_table': summary_table,
+        'deployment_summary': deployment_summary,
+        'deployment_efficiency': deployment_efficiency,
+        'monthly_closures': monthly_closures,
+        'monthly_summary': monthly_summary,
+        'combined_records': combined_records,
     }
