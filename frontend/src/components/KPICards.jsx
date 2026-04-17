@@ -1,8 +1,7 @@
 import React from 'react'
-import { TrendingUp, Truck, Clock, Target, BarChart2, Award, Activity } from 'lucide-react'
+import { TrendingUp, Truck, Clock, Target, Timer, Percent, Activity, Award } from 'lucide-react'
 import { useTheme, formatFleet, formatNum } from '../ThemeContext'
 
-// Fleet size formatter (number of vehicles) — exported for reuse across components
 export { formatFleet, formatNum }
 
 const CARDS = [
@@ -15,7 +14,7 @@ const CARDS = [
     iconColor: 'text-blue-400',
     format: (v) => formatFleet(v),
     unit: 'vehicles',
-    context: 'Excl. Closed Lost',
+    context: 'Deals + Pending Projects',
   },
   {
     key: 'total_closed_won',
@@ -31,7 +30,7 @@ const CARDS = [
   {
     key: 'total_pending_deployment',
     title: 'Pending Deployment',
-    icon: Clock,
+    icon: Truck,
     border: 'border-l-purple-500',
     iconBg: 'bg-purple-500/10',
     iconColor: 'text-purple-400',
@@ -48,18 +47,29 @@ const CARDS = [
     iconColor: 'text-orange-400',
     format: (v) => formatNum(v),
     unit: 'opps',
-    context: 'All records',
+    context: 'Deals + new projects',
   },
   {
-    key: 'avg_deal_size',
-    title: 'Avg Fleet Size',
-    icon: BarChart2,
+    key: 'avg_tat_days',
+    title: 'Avg TAT',
+    icon: Timer,
     border: 'border-l-teal-500',
     iconBg: 'bg-teal-500/10',
     iconColor: 'text-teal-400',
-    format: (v) => formatFleet(v),
-    unit: 'vehicles',
-    context: 'Per opportunity',
+    format: (v) => v ? `${Math.round(v)}d` : '—',
+    unit: 'days',
+    context: 'Close Date − Created',
+  },
+  {
+    key: 'avg_margin_percent',
+    title: 'Avg Margin %',
+    icon: Percent,
+    border: 'border-l-pink-500',
+    iconBg: 'bg-pink-500/10',
+    iconColor: 'text-pink-400',
+    format: (v) => v != null && v !== 0 ? `${(+v).toFixed(1)}%` : '—',
+    unit: null,
+    context: '(Quote − Cost) / Quote',
   },
   {
     key: 'win_rate',
@@ -72,21 +82,10 @@ const CARDS = [
     unit: null,
     context: 'Closed Won / Total',
   },
-  {
-    key: 'pipeline_coverage_ratio',
-    title: 'Pipeline Coverage',
-    icon: Truck,
-    border: 'border-l-pink-500',
-    iconBg: 'bg-pink-500/10',
-    iconColor: 'text-pink-400',
-    format: (v) => v ? `${v.toFixed(1)}x` : '—',
-    unit: null,
-    context: 'Pipeline / 90d closed',
-  },
 ]
 
 export default function KPICards({ kpis }) {
-  const { tw, isDark } = useTheme()
+  const { tw } = useTheme()
   if (!kpis) return null
 
   return (

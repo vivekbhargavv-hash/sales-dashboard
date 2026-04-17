@@ -132,6 +132,15 @@ def _date_ts(ts):
     return pd.Timestamp(0)
 
 
+def _fmt_month_label(period_str):
+    """Convert '2026-04' to 'Apr-26'."""
+    try:
+        dt = datetime.strptime(period_str, '%Y-%m')
+        return dt.strftime('%b-%y')
+    except Exception:
+        return period_str
+
+
 def process_csvs(deals_bytes, projects_bytes):
     # ─── Read CSVs ────────────────────────────────────────────────────────────
     deals_raw = pd.read_csv(io.BytesIO(deals_bytes))
@@ -150,6 +159,8 @@ def process_csvs(deals_bytes, projects_bytes):
         'Close Date': 'closed_date',
         'Modified Time': 'modified_date',
         'Created Time': 'created_date',
+        'Quote': 'quote',
+        'Total Cost': 'total_cost',
     }
     for orig, new in col_map_deals.items():
         if orig in deals_raw.columns:
@@ -158,15 +169,29 @@ def process_csvs(deals_bytes, projects_bytes):
 
     # Ensure all expected deal columns exist
     for col in ['deal_name', 'org_name', 'stage', 'city', 'vehicle_type',
-                'deal_size', 'assigned_to', 'closed_date', 'modified_date', 'created_date']:
+                'deal_size', 'assigned_to', 'closed_date', 'modified_date', 'created_date',
+                'quote', 'total_cost']:
         if col not in df.columns:
             df[col] = None
 
     # Parse numeric / date columns for deals
     df['deal_size'] = df['deal_size'].apply(parse_deal_size)
+    df['quote'] = df['quote'].apply(parse_deal_size)
+    df['total_cost'] = df['total_cost'].apply(parse_deal_size)
     df['created_date'] = df['created_date'].apply(parse_date)
     df['closed_date'] = df['closed_date'].apply(parse_date)
     df['modified_date'] = df['modified_date'].apply(parse_date)
+
+    # Per-deal margin: only where quote > 0 and total_cost is valid
+    margin_mask = (df['quote'] > 0) & (df['total_cost'] > 0)
+    df['margin'] = None
+    df['margin_percent'] = None
+    df.loc[margin_mask, 'margin'] = df.loc[margin_mask, 'quote'] - df.loc[margin_mask, 'total_cost']
+    df.loc[margin_mask, 'margin_percent'] = (
+        df.loc[margin_mask, 'margin'] / df.loc[margin_mask, 'quote'] * 100
+    )
+    valid_margin = df[df['margin_percent'].notna()]['margin_percent']
+    avg_margin_percent = safe_float(valid_margin.mean() if len(valid_margin) > 0 else 0)
 
     # Derive client_name: prefer org_name, fall back to deal_name
     df['org_name'] = df['org_name'].fillna('').astype(str).str.strip()
@@ -222,19 +247,34 @@ def process_csvs(deals_bytes, projects_bytes):
     proj['fleet_size'] = proj['fleet_size'].fillna(0)
     proj['assigned_to'] = proj['assigned_to'].fillna('')
 
+    # Normalize is_converted_from_deal
+    if 'is_converted_from_deal' not in proj.columns:
+        proj['is_converted_from_deal'] = 'No'
+    proj['is_converted_from_deal'] = proj['is_converted_from_deal'].fillna('No').astype(str).str.strip()
+    proj['is_converted'] = proj['is_converted_from_deal'].str.lower() == 'yes'
+
     proj = proj.reset_index(drop=True)
 
     # ─── Computed deal subsets ────────────────────────────────────────────────
     closed_won = df[df['stage'] == 'Closed Won']
     not_lost = df[df['stage'] != 'Closed Lost']
 
-    # ─── KPIs (deals only) ────────────────────────────────────────────────────
-    pipeline_value = safe_float(not_lost['deal_size'].sum())
+    # ─── KPIs ────────────────────────────────────────────────────────────────
+    # total_opps: deals + non-converted projects (no double-counting)
+    proj_not_converted_count = int((~proj['is_converted']).sum())
+    total_opps = len(df) + proj_not_converted_count
+
+    # pipeline_value: not-lost deals + non-converted pending deployment projects
+    proj_pending_new = proj[
+        (proj['status'] == 'Pending Deployment') & (~proj['is_converted'])
+    ]
+    pipeline_value = safe_float(not_lost['deal_size'].sum()) + safe_float(proj_pending_new['fleet_size'].sum())
+
     closed_won_value = safe_float(closed_won['deal_size'].sum())
-    # pending deployment vehicles now come from proj
-    pending_depl_proj = proj[proj['status'] == 'Pending Deployment']
-    pending_value = safe_float(pending_depl_proj['fleet_size'].sum())
-    total_opps = len(df)
+
+    # total_pending_deployment: sum of ALL pending projects fleet (not just non-converted)
+    pending_value = safe_float(proj[proj['status'] == 'Pending Deployment']['fleet_size'].sum())
+
     positive_deals = df[df['deal_size'] > 0]['deal_size']
     avg_deal_size = safe_float(positive_deals.mean() if len(positive_deals) > 0 else 0)
     win_rate = safe_float(len(closed_won) / total_opps * 100 if total_opps > 0 else 0)
@@ -248,6 +288,11 @@ def process_csvs(deals_bytes, projects_bytes):
     ]['deal_size'].sum()
     pipeline_coverage = safe_float(pipeline_value / closed_last_90 if closed_last_90 > 0 else 0)
 
+    # avg_tat_days: Close Date - Created Time for Closed Won deals only
+    cw_tat = closed_won[closed_won['created_date'].notna() & closed_won['closed_date'].notna()].copy()
+    cw_tat['tat_days'] = (cw_tat['closed_date'] - cw_tat['created_date']).dt.days.clip(lower=0)
+    avg_tat_days = safe_float(cw_tat['tat_days'].mean() if len(cw_tat) > 0 else 0)
+
     kpis = {
         'total_pipeline_value': pipeline_value,
         'total_closed_won': closed_won_value,
@@ -256,6 +301,8 @@ def process_csvs(deals_bytes, projects_bytes):
         'avg_deal_size': avg_deal_size,
         'win_rate': win_rate,
         'pipeline_coverage_ratio': pipeline_coverage,
+        'avg_tat_days': avg_tat_days,
+        'avg_margin_percent': round(avg_margin_percent, 2),
     }
 
     # ─── Stage Summary (deals only) ───────────────────────────────────────────
@@ -426,12 +473,22 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in city_grp.iterrows()
     ]
 
-    # ─── Vehicle Category (deals only) ───────────────────────────────────────
-    vc_grp = df.groupby('vehicle_category').agg(
-        total_deal_size=('deal_size', 'sum'),
-        count=('deal_size', 'count')
+    # ─── Vehicle Category (deals not-lost + pending projects) ────────────────
+    # Deals (not Closed Lost)
+    vc_deals = df[df['stage'] != 'Closed Lost'][['vehicle_category', 'deal_size']].copy()
+    vc_deals = vc_deals.rename(columns={'deal_size': '_fleet'})
+
+    # Projects in Pending Deployment
+    proj_pending_vc = proj[proj['status'] == 'Pending Deployment'][['vehicle_type', 'fleet_size']].copy()
+    proj_pending_vc['vehicle_category'] = proj_pending_vc['vehicle_type'].apply(get_vehicle_category)
+    proj_pending_vc = proj_pending_vc.rename(columns={'fleet_size': '_fleet'})[['vehicle_category', '_fleet']]
+
+    vc_combined = pd.concat([vc_deals, proj_pending_vc], ignore_index=True)
+    vc_grp = vc_combined.groupby('vehicle_category').agg(
+        total_deal_size=('_fleet', 'sum'),
+        count=('_fleet', 'count')
     ).reset_index().sort_values('total_deal_size', ascending=False)
-    total_ds = safe_float(df['deal_size'].sum())
+    total_ds = safe_float(vc_combined['_fleet'].sum())
 
     vehicle_category = [
         {
@@ -530,39 +587,63 @@ def process_csvs(deals_bytes, projects_bytes):
     # ─── Deployment Efficiency (projects only) ────────────────────────────────
     deployed_fleet = safe_float(proj.loc[proj['status'] == 'Deployed', 'fleet_size'].sum())
     pending_fleet = safe_float(proj.loc[proj['status'] == 'Pending Deployment', 'fleet_size'].sum())
-    denom = pending_fleet + deployed_fleet
-    deployment_efficiency = round(deployed_fleet / denom * 100, 1) if denom > 0 else 0.0
+    deployment_efficiency = round(deployed_fleet / pending_fleet * 100, 1) if pending_fleet > 0 else 0.0
 
-    # ─── Monthly Closures (deals only: Closed Won with Close Date) ────────────
-    cw_closed = closed_won[closed_won['closed_date'].notna()].copy()
-    monthly_closures = []
-    if len(cw_closed) > 0:
-        cw_closed['month'] = cw_closed['closed_date'].dt.to_period('M').astype(str)
-        # Use org_name as client, fall back to deal_name if org_name empty
-        cw_closed = cw_closed.copy()
-        mc_grp = cw_closed.groupby(
-            ['month', 'client_name', 'assigned_to'],
-            dropna=False
-        ).agg(vehicles=('deal_size', 'sum')).reset_index()
-        mc_grp = mc_grp.sort_values(['month', 'client_name'])
-        monthly_closures = [
-            {
+    # ─── Monthly Closures (Deals: Closed Won + Projects: Pending, not converted) ──
+    mc_rows = []
+
+    # Source A: Closed Won deals with Close Date
+    cw_mc = closed_won[closed_won['closed_date'].notna()].copy()
+    if len(cw_mc) > 0:
+        cw_mc['month_key'] = cw_mc['closed_date'].dt.to_period('M').astype(str)
+        cw_mc['month'] = cw_mc['month_key'].apply(_fmt_month_label)
+        cw_grp = cw_mc.groupby(['month_key', 'month', 'client_name', 'assigned_to'], dropna=False).agg(
+            vehicles=('deal_size', 'sum')
+        ).reset_index()
+        for _, row in cw_grp.iterrows():
+            mc_rows.append({
+                'month_key': row['month_key'],
                 'month': row['month'],
-                'client': row['client_name'],
-                'spoc': row['assigned_to'],
-                'vehicles': safe_float(row['vehicles'])
-            }
-            for _, row in mc_grp.iterrows()
-        ]
+                'client': str(row['client_name']),
+                'spoc': str(row['assigned_to']),
+                'vehicles': safe_float(row['vehicles']),
+                'source': 'Deal',
+            })
 
-    # ─── Monthly Summary (from monthly_closures) ──────────────────────────────
+    # Source B: Projects where status == Pending Deployment AND is_converted == False
+    proj_mc = proj[
+        (proj['status'] == 'Pending Deployment') &
+        (~proj['is_converted']) &
+        proj['created_date'].notna()
+    ].copy()
+    if len(proj_mc) > 0:
+        proj_mc['month_key'] = proj_mc['created_date'].dt.to_period('M').astype(str)
+        proj_mc['month'] = proj_mc['month_key'].apply(_fmt_month_label)
+        proj_grp = proj_mc.groupby(['month_key', 'month', 'project_name', 'assigned_to'], dropna=False).agg(
+            vehicles=('fleet_size', 'sum')
+        ).reset_index()
+        for _, row in proj_grp.iterrows():
+            mc_rows.append({
+                'month_key': row['month_key'],
+                'month': row['month'],
+                'client': str(row['project_name']),
+                'spoc': str(row['assigned_to']),
+                'vehicles': safe_float(row['vehicles']),
+                'source': 'Project',
+            })
+
+    # Sort by month_key asc, then client
+    mc_rows.sort(key=lambda r: (r['month_key'], r['client']))
+    monthly_closures = [{k: v for k, v in r.items() if k != 'month_key'} for r in mc_rows]
+
+    # Monthly summary
     monthly_summary = []
     if monthly_closures:
-        ms_df = pd.DataFrame(monthly_closures)
-        ms_grp = ms_df.groupby('month').agg(
+        ms_df = pd.DataFrame(mc_rows)
+        ms_grp = ms_df.groupby(['month_key', 'month']).agg(
             total_deals=('client', 'count'),
             total_vehicles=('vehicles', 'sum')
-        ).reset_index().sort_values('month')
+        ).reset_index().sort_values('month_key')
         monthly_summary = [
             {
                 'month': row['month'],
@@ -579,6 +660,8 @@ def process_csvs(deals_bytes, projects_bytes):
         if not client:
             client = row['deal_name'] or ''
         ts = row['modified_date']
+        m = row.get('margin')
+        mp = row.get('margin_percent')
         deal_records.append({
             'type': 'Deal',
             'name': row['deal_name'],
@@ -590,6 +673,8 @@ def process_csvs(deals_bytes, projects_bytes):
             'spoc': row['assigned_to'],
             'date': _fmt_date(ts),
             'date_ts': _date_ts(ts),
+            'margin': round(float(m), 2) if m is not None and not (isinstance(m, float) and np.isnan(m)) else None,
+            'margin_percent': round(float(mp), 2) if mp is not None and not (isinstance(mp, float) and np.isnan(mp)) else None,
         })
 
     proj_records = []
@@ -606,6 +691,8 @@ def process_csvs(deals_bytes, projects_bytes):
             'spoc': row['assigned_to'],
             'date': _fmt_date(ts),
             'date_ts': _date_ts(ts),
+            'margin': None,
+            'margin_percent': None,
         })
 
     combined_all = deal_records + proj_records
