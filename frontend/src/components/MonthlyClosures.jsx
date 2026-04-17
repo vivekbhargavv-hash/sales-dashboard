@@ -4,7 +4,7 @@ import { useTheme } from '../ThemeContext'
 export default function MonthlyClosures({ monthlyClosures, monthlySummary }) {
   const { tw, isDark } = useTheme()
 
-  // Backend already sorts DESC; mirror that sort here for stability
+  // Backend already sorts DESC; mirror that here for stability
   const sortedClosures = useMemo(() => {
     if (!monthlyClosures || monthlyClosures.length === 0) return []
     return [...monthlyClosures]
@@ -21,6 +21,13 @@ export default function MonthlyClosures({ monthlyClosures, monthlySummary }) {
   }, [sortedClosures])
 
   const altRow = isDark ? 'bg-slate-700/20' : 'bg-gray-50'
+
+  function fmtQuote(v) {
+    if (v == null) return '—'
+    return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })
+  }
+
+  const COLS = ['Month', 'Client', 'City', 'Vehicle Type', 'Quote', 'Vehicles', 'Source', 'SPOC']
 
   return (
     <div className="space-y-6">
@@ -68,11 +75,11 @@ export default function MonthlyClosures({ monthlyClosures, monthlySummary }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className={tw.divider}>
-                  {['Month', 'Client', 'SPOC', 'Vehicles', 'Source'].map(label => (
+                  {COLS.map(label => (
                     <th
                       key={label}
-                      className={`py-3 px-4 text-xs font-semibold uppercase tracking-wide text-green-600 whitespace-nowrap
-                        ${label === 'Vehicles' ? 'text-right' : 'text-left'}`}
+                      className={`py-3 px-4 text-xs font-semibold uppercase tracking-wide text-green-600
+                        whitespace-nowrap ${label === 'Quote' || label === 'Vehicles' ? 'text-right' : 'text-left'}`}
                     >
                       {label}
                     </th>
@@ -94,15 +101,23 @@ export default function MonthlyClosures({ monthlyClosures, monthlySummary }) {
                       {row.showMonth ? row.month : '·'}
                     </td>
 
-                    <td className={`py-2.5 px-4 ${tw.textBody}`}>
+                    <td className={`py-2.5 px-4 ${tw.textBody} max-w-[160px] truncate`}>
                       {row.client || '—'}
                     </td>
 
-                    <td className={`py-2.5 px-4 ${tw.textSecondary}`}>
-                      {row.spoc || '—'}
+                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
+                      {row.city || '—'}
                     </td>
 
-                    <td className="py-2.5 px-4 text-right font-medium text-green-500 tabular-nums">
+                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
+                      {row.vehicle_type || '—'}
+                    </td>
+
+                    <td className={`py-2.5 px-4 text-right tabular-nums ${tw.textVal} whitespace-nowrap`}>
+                      {fmtQuote(row.quote)}
+                    </td>
+
+                    <td className="py-2.5 px-4 text-right font-medium text-green-500 tabular-nums whitespace-nowrap">
                       {(row.vehicles ?? 0).toLocaleString('en-IN')}
                     </td>
 
@@ -115,6 +130,10 @@ export default function MonthlyClosures({ monthlyClosures, monthlySummary }) {
                       }`}>
                         {row.source || '—'}
                       </span>
+                    </td>
+
+                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
+                      {row.spoc || '—'}
                     </td>
                   </tr>
                 ))}

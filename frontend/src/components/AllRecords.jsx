@@ -186,14 +186,13 @@ export default function AllRecords({ combinedRecords }) {
     { label: 'City',           align: 'left'  },
     { label: 'Vehicle',        align: 'left'  },
     { label: 'Fleet',          align: 'right' },
-    { label: 'SPOC',           align: 'left'  },
     { label: 'Driver Type',    align: 'left'  },
     { label: 'Charging Scope', align: 'left'  },
     { label: 'Quote',          align: 'right' },
     { label: 'Total Cost',     align: 'right' },
     { label: 'Margin',         align: 'right' },
     { label: 'Margin %',       align: 'right' },
-    { label: 'Last Updated',   align: 'left'  },
+    { label: 'SPOC',           align: 'left'  },
   ]
 
   return (
@@ -279,10 +278,6 @@ export default function AllRecords({ combinedRecords }) {
                       {row.fleet != null ? Number(row.fleet).toLocaleString('en-IN') : '—'}
                     </td>
 
-                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
-                      {row.spoc || '—'}
-                    </td>
-
                     {/* Driver Type */}
                     <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
                       {row.driver_type || '—'}
@@ -321,8 +316,9 @@ export default function AllRecords({ combinedRecords }) {
                       {fmtMarginPct(row.margin_percent)}
                     </td>
 
-                    <td className={`py-2.5 px-4 ${tw.textMuted} whitespace-nowrap text-xs`}>
-                      {row.date || '—'}
+                    {/* SPOC — last column */}
+                    <td className={`py-2.5 px-4 ${tw.textSecondary} whitespace-nowrap`}>
+                      {row.spoc || '—'}
                     </td>
                   </tr>
                 ))}

@@ -13,6 +13,7 @@ import TopClients from './TopClients'
 import ConcentrationRisk from './ConcentrationRisk'
 import DrilldownPivot from './DrilldownPivot'
 import CityHeatmap from './CityHeatmap'
+import GeoFleet from './GeoFleet'
 import MonthlyClosures from './MonthlyClosures'
 import AllRecords from './AllRecords'
 
@@ -261,10 +262,6 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
               <StageSummary stageSummary={data.projects_stage_summary} title="Projects Stage Summary" />
             </div>
             <VehicleCategory vehicleCategory={d.vehicle_category} />
-            <DeploymentPipelineSection
-              deploymentSummary={data.deployment_summary}
-              deploymentEfficiency={data.deployment_efficiency}
-            />
           </div>
         )
 
@@ -290,6 +287,7 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
       case 'geo':
         return (
           <div className="space-y-6">
+            <GeoFleet geoFleet={data.geo_fleet} />
             <CityHeatmap cityHeatmap={d.city_heatmap} />
             <VehicleCategory vehicleCategory={d.vehicle_category} />
           </div>

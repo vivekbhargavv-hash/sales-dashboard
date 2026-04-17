@@ -231,6 +231,9 @@ def process_csvs(deals_bytes, projects_bytes):
     df['assigned_to'] = df['assigned_to'].fillna('')
     df['driver_type'] = df['driver_type'].fillna('').astype(str).str.strip()
     df['charging_scope'] = df['charging_scope'].fillna('').astype(str).str.strip()
+    # Remove literal 'nan' strings that can appear after astype(str)
+    df.loc[df['driver_type'] == 'nan', 'driver_type'] = ''
+    df.loc[df['charging_scope'] == 'nan', 'charging_scope'] = ''
 
     df = df.reset_index(drop=True)
 
@@ -427,11 +430,23 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in adv_grp.iterrows()
     ]
 
-    # ─── Top Clients (deals only) ─────────────────────────────────────────────
-    top_clients_df = not_lost.groupby('client_name').agg(
-        total_deal_size=('deal_size', 'sum'),
-        count=('deal_size', 'count'),
-        avg_deal_size=('deal_size', 'mean')
+    # ─── Top Clients (Deals not-lost + Pending Deployment projects) ─────────
+    # Build a unified client→fleet view for insights
+    deal_client_fleet = not_lost[['client_name', 'deal_size']].rename(
+        columns={'deal_size': '_fleet'}
+    ).copy()
+
+    proj_pending_clients = proj[proj['status'] == 'Pending Deployment'].copy()
+    proj_pending_clients['client_name'] = proj_pending_clients['project_name']
+    proj_pending_clients = proj_pending_clients[['client_name', 'fleet_size']].rename(
+        columns={'fleet_size': '_fleet'}
+    )
+
+    ci_combined = pd.concat([deal_client_fleet, proj_pending_clients], ignore_index=True)
+    top_clients_df = ci_combined.groupby('client_name').agg(
+        total_deal_size=('_fleet', 'sum'),
+        count=('_fleet', 'count'),
+        avg_deal_size=('_fleet', 'mean')
     ).reset_index().sort_values('total_deal_size', ascending=False).head(10)
 
     top_clients = [
@@ -579,9 +594,9 @@ def process_csvs(deals_bytes, projects_bytes):
         for _, row in vc_grp.iterrows()
     ]
 
-    # ─── Concentration Risk (deals only) ─────────────────────────────────────
-    nl_client = not_lost.groupby('client_name').agg(
-        value=('deal_size', 'sum')
+    # ─── Concentration Risk (Deals not-lost + Pending Deployment projects) ───
+    nl_client = ci_combined.groupby('client_name').agg(
+        value=('_fleet', 'sum')
     ).reset_index().sort_values('value', ascending=False)
     nl_total = safe_float(nl_client['value'].sum())
 
@@ -678,16 +693,17 @@ def process_csvs(deals_bytes, projects_bytes):
     if len(cw_mc) > 0:
         cw_mc['month_key'] = cw_mc['closed_date'].dt.to_period('M').astype(str)
         cw_mc['month'] = cw_mc['month_key'].apply(_fmt_month_label)
-        cw_grp = cw_mc.groupby(['month_key', 'month', 'client_name', 'assigned_to'], dropna=False).agg(
-            vehicles=('deal_size', 'sum')
-        ).reset_index()
-        for _, row in cw_grp.iterrows():
+        for _, row in cw_mc.iterrows():
+            q = safe_float(row.get('quote', 0))
             mc_rows.append({
                 'month_key': row['month_key'],
                 'month': row['month'],
                 'client': str(row['client_name']),
+                'city': str(row.get('city', '')),
+                'vehicle_type': str(row.get('vehicle_type', '')),
+                'quote': q if q > 0 else None,
                 'spoc': str(row['assigned_to']),
-                'vehicles': safe_float(row['vehicles']),
+                'vehicles': safe_float(row['deal_size']),
                 'source': 'Deal',
             })
 
@@ -699,16 +715,16 @@ def process_csvs(deals_bytes, projects_bytes):
     if len(proj_mc) > 0:
         proj_mc['month_key'] = proj_mc['created_date'].dt.to_period('M').astype(str)
         proj_mc['month'] = proj_mc['month_key'].apply(_fmt_month_label)
-        proj_grp = proj_mc.groupby(['month_key', 'month', 'project_name', 'assigned_to'], dropna=False).agg(
-            vehicles=('fleet_size', 'sum')
-        ).reset_index()
-        for _, row in proj_grp.iterrows():
+        for _, row in proj_mc.iterrows():
             mc_rows.append({
                 'month_key': row['month_key'],
                 'month': row['month'],
                 'client': str(row['project_name']),
+                'city': str(row.get('city', '')),
+                'vehicle_type': str(row.get('vehicle_type', '')),
+                'quote': None,
                 'spoc': str(row['assigned_to']),
-                'vehicles': safe_float(row['vehicles']),
+                'vehicles': safe_float(row['fleet_size']),
                 'source': 'Project',
             })
 
@@ -810,6 +826,52 @@ def process_csvs(deals_bytes, projects_bytes):
         del r['date_ts']
     combined_records = combined_all
 
+    # ─── Geographic & Fleet (Region → City → Client → Vehicle → Fleet) ────────
+    REGION_MAP = {
+        'Delhi NCR':    'North', 'Delhi':        'North', 'Gurgaon':      'North',
+        'Noida':        'North', 'Sonipat':      'North', 'Farukh Nagar': 'North',
+        'RON':          'North',
+        'Mumbai':       'West',  'Pune':         'West',  'Ahmedabad':    'West',
+        'ROW':          'West',
+        'Bangalore':    'South', 'Chennai':      'South', 'Hyderabad':    'South',
+        'ROS':          'South',
+        'Kolkata':      'East',  'Patna':        'East',  'ROE':          'East',
+    }
+
+    def get_region(city):
+        return REGION_MAP.get(str(city).strip(), 'Other')
+
+    geo_rows = []
+
+    # Deals: exclude Closed Lost
+    for _, row in df[df['stage'] != 'Closed Lost'].iterrows():
+        geo_rows.append({
+            'region': get_region(row['city']),
+            'city': str(row['city']),
+            'client': str(row['client_name']),
+            'vehicle_type': str(row['vehicle_type']),
+            'fleet': safe_float(row['deal_size']),
+            'source': 'Deal',
+            'stage': str(row['stage']),
+        })
+
+    # Projects: Pending Deployment only
+    for _, row in proj[proj['status'] == 'Pending Deployment'].iterrows():
+        client = str(row['project_name'])
+        geo_rows.append({
+            'region': get_region(row['city']),
+            'city': str(row['city']),
+            'client': client,
+            'vehicle_type': str(row['vehicle_type']),
+            'fleet': safe_float(row['fleet_size']),
+            'source': 'Project',
+            'stage': 'Pending Deployment',
+        })
+
+    # Sort by region, city, client for deterministic rendering
+    geo_rows.sort(key=lambda r: (r['region'], r['city'], r['client']))
+    geo_fleet = geo_rows
+
     return {
         'kpis': kpis,
         'stage_summary': stage_summary,
@@ -830,4 +892,5 @@ def process_csvs(deals_bytes, projects_bytes):
         'monthly_closures': monthly_closures,
         'monthly_summary': monthly_summary,
         'combined_records': combined_records,
+        'geo_fleet': geo_fleet,
     }
