@@ -799,6 +799,18 @@ def process_csvs(deals_bytes, projects_bytes):
                 'source': 'Project',
             })
 
+    # Deduplicate: if a Deal and Project share the same client+city+vehicle_type, keep only the Deal
+    deal_mc_keys = {
+        (r['client'].strip().lower(), r['city'].strip().lower(), r['vehicle_type'].strip().lower())
+        for r in mc_rows if r['source'] == 'Deal'
+    }
+    mc_rows = [
+        r for r in mc_rows
+        if r['source'] == 'Deal'
+        or (r['client'].strip().lower(), r['city'].strip().lower(), r['vehicle_type'].strip().lower())
+        not in deal_mc_keys
+    ]
+
     # Sort: most recent month first, then by client within same month
     mc_rows.sort(key=lambda r: (r['month_key'], r['client']), reverse=True)
     monthly_closures = [{k: v for k, v in r.items() if k != 'month_key'} for r in mc_rows]
@@ -892,6 +904,19 @@ def process_csvs(deals_bytes, projects_bytes):
         })
 
     combined_all = deal_records + proj_records
+
+    # Deduplicate: if a Deal and Project share the same name+city+vehicle, keep only the Deal
+    deal_combined_keys = {
+        (r['name'].strip().lower(), r['city'].strip().lower(), r['vehicle'].strip().lower())
+        for r in combined_all if r['type'] == 'Deal'
+    }
+    combined_all = [
+        r for r in combined_all
+        if r['type'] == 'Deal'
+        or (r['name'].strip().lower(), r['city'].strip().lower(), r['vehicle'].strip().lower())
+        not in deal_combined_keys
+    ]
+
     combined_all.sort(key=lambda r: r['date_ts'], reverse=True)
     for r in combined_all:
         del r['date_ts']
