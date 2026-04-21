@@ -94,18 +94,35 @@ def _user_response(user: User, token: str) -> dict:
 
 def _send_reset_email(to_email: str, name: str, reset_url: str):
     """Send password-reset email via Resend. Falls back to console log if no API key."""
+    # Always log the link server-side so an admin can recover it from Render logs if needed.
+    # Tokens are single-use and expire in 30 min, so this is a reasonable trade-off for a
+    # small internal tool.
+    print(f"\n{'='*60}")
+    print(f"[RESET] Password reset link for {to_email}:")
+    print(f"  {reset_url}")
+    print(f"{'='*60}")
+
+    # Diagnostic warnings — fire regardless of whether we actually send the email, so the
+    # admin can spot misconfiguration from the logs.
+    if not FRONTEND_URL:
+        print("[RESET] WARNING: FRONTEND_URL env var is empty — the reset link above is "
+              "relative and will 404 when opened. Set FRONTEND_URL to your deployed frontend "
+              "URL (e.g. https://your-app.vercel.app) on Render and redeploy.")
+
     if not RESEND_API_KEY:
-        # Local dev: print the link so you can test without an email provider
-        print(f"\n{'='*60}")
-        print(f"[DEV] Password reset link for {to_email}:")
-        print(f"  {reset_url}")
-        print(f"{'='*60}\n")
+        print("[RESET] RESEND_API_KEY not set — email was NOT sent. Set RESEND_API_KEY on "
+              "Render to enable delivery. Users will need to grab the link from these logs.\n")
         return
+
+    if RESEND_FROM == "onboarding@resend.dev":
+        print("[RESET] NOTE: RESEND_FROM_EMAIL is the default 'onboarding@resend.dev' which "
+              "only delivers to the Resend account owner's verified email. Verify a domain in "
+              "Resend and set RESEND_FROM_EMAIL to 'noreply@yourdomain.com' to deliver to all.")
 
     try:
         import resend
         resend.api_key = RESEND_API_KEY
-        resend.Emails.send({
+        result = resend.Emails.send({
             "from": RESEND_FROM,
             "to": to_email,
             "subject": "Reset your Moeving password",
@@ -146,9 +163,12 @@ def _send_reset_email(to_email: str, name: str, reset_url: str):
 </body>
 </html>""",
         })
+        print(f"[RESET] Resend accepted email for {to_email}. Result: {result}")
     except Exception as e:
-        # Don't expose email errors to the client
-        print(f"[EMAIL ERROR] {e}")
+        # Don't expose email errors to the client, but log loudly for the admin
+        import traceback
+        print(f"[RESET] EMAIL ERROR sending to {to_email}: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
 
 # ── Pydantic schemas ───────────────────────────────────────────────────────────
@@ -240,7 +260,12 @@ def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
         db.add(PasswordResetToken(user_id=user.id, token=token, expires_at=expires_at))
         db.commit()
 
-        reset_url = f"{FRONTEND_URL.rstrip('/')}/reset-password?token={token}"
+        # Build an absolute, HTTPS URL. If FRONTEND_URL isn't configured the link is useless —
+        # log clearly and skip the email send so we don't deliver a broken relative link.
+        base = (FRONTEND_URL or "").strip().rstrip("/")
+        if base and not base.startswith(("http://", "https://")):
+            base = "https://" + base
+        reset_url = f"{base}/reset-password?token={token}" if base else f"/reset-password?token={token}"
         _send_reset_email(user.email, user.name, reset_url)
 
     return {"message": "If an account with that email exists, a reset link has been sent."}
