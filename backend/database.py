@@ -2,7 +2,7 @@
 Database setup using SQLAlchemy.
 Supports SQLite (local dev) and PostgreSQL (production via DATABASE_URL).
 """
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
+from sqlalchemy import create_engine, Column, Integer, Float, String, Text, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import os
@@ -52,6 +52,22 @@ class PasswordResetToken(Base):
     expires_at = Column(DateTime, nullable=False)
     used       = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MonthlyTarget(Base):
+    """Global monthly vehicle deployment targets. Admin-editable."""
+    __tablename__ = "monthly_targets"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    year            = Column(Integer, nullable=False, index=True)
+    month           = Column(Integer, nullable=False, index=True)   # 1-12
+    target_vehicles = Column(Float,   nullable=False, default=0)
+    updated_by      = Column(String(255))
+    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('year', 'month', name='uq_monthly_target_year_month'),
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

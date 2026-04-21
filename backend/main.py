@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from data_processor import process_csvs
 from auth import verify_password, get_password_hash, create_access_token, decode_token
-from database import get_db, init_db, User, UserDashboard, PasswordResetToken
+from database import get_db, init_db, User, UserDashboard, PasswordResetToken, MonthlyTarget
 
 load_dotenv()
 
@@ -24,6 +24,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM    = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 RESET_EXPIRY_MINUTES = 30
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "vivek@moeving.com").lower().strip()
 
 allowed_origins = [
     "http://localhost:5173",
@@ -68,11 +69,26 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
+def is_admin(user: User) -> bool:
+    return (user.email or "").lower().strip() == ADMIN_EMAIL
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    if not is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return current_user
+
+
 def _user_response(user: User, token: str) -> dict:
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {"id": user.id, "name": user.name, "email": user.email},
+        "user": {
+            "id":       user.id,
+            "name":     user.name,
+            "email":    user.email,
+            "is_admin": is_admin(user),
+        },
     }
 
 
@@ -153,6 +169,14 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+class TargetItem(BaseModel):
+    year: int
+    month: int                     # 1-12
+    target_vehicles: float
+
+class TargetsUpsert(BaseModel):
+    targets: list[TargetItem]
+
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────────
 
@@ -186,7 +210,12 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/me", tags=["auth"])
 def me(current_user: User = Depends(get_current_user)):
-    return {"id": current_user.id, "name": current_user.name, "email": current_user.email}
+    return {
+        "id":       current_user.id,
+        "name":     current_user.name,
+        "email":    current_user.email,
+        "is_admin": is_admin(current_user),
+    }
 
 
 @app.post("/forgot-password", tags=["auth"])
@@ -305,6 +334,45 @@ def clear_dashboard(current_user: User = Depends(get_current_user), db: Session 
         db.delete(record)
         db.commit()
     return {"message": "Dashboard data cleared."}
+
+
+# ── Targets (admin-managed monthly deployment targets) ────────────────────────
+
+@app.get("/api/targets", tags=["targets"])
+def list_targets(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return all stored monthly targets. Any authenticated user can read."""
+    rows = db.query(MonthlyTarget).order_by(MonthlyTarget.year, MonthlyTarget.month).all()
+    return {
+        "is_admin": is_admin(current_user),
+        "targets": [
+            {"year": r.year, "month": r.month, "target_vehicles": r.target_vehicles}
+            for r in rows
+        ],
+    }
+
+
+@app.put("/api/targets", tags=["targets"])
+def upsert_targets(req: TargetsUpsert, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Admin-only: upsert a batch of monthly targets."""
+    count = 0
+    for t in req.targets:
+        if not (1 <= t.month <= 12) or t.year < 2000 or t.year > 2100:
+            continue
+        if t.target_vehicles < 0:
+            continue
+        existing = db.query(MonthlyTarget).filter_by(year=t.year, month=t.month).first()
+        if existing:
+            existing.target_vehicles = t.target_vehicles
+            existing.updated_by      = admin.email
+        else:
+            db.add(MonthlyTarget(
+                year=t.year, month=t.month,
+                target_vehicles=t.target_vehicles,
+                updated_by=admin.email,
+            ))
+        count += 1
+    db.commit()
+    return {"message": f"Updated {count} targets.", "count": count}
 
 
 # ── System ─────────────────────────────────────────────────────────────────────

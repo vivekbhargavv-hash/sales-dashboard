@@ -16,6 +16,7 @@ import CityHeatmap from './CityHeatmap'
 import GeoFleet from './GeoFleet'
 import MonthlyClosures from './MonthlyClosures'
 import AllRecords from './AllRecords'
+import TargetsVsActuals from './TargetsVsActuals'
 
 const TABS = [
   { id: 'overview',         label: 'Overview' },
@@ -23,6 +24,7 @@ const TABS = [
   { id: 'clients',          label: 'Client Insights' },
   { id: 'geo',              label: 'Geographic & Fleet' },
   { id: 'monthly_closures', label: 'Monthly Closures' },
+  { id: 'targets',          label: 'Targets vs Actuals' },
   { id: 'all_records',      label: 'All Records' },
 ]
 
@@ -298,7 +300,7 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
   const uploadedAt   = formatUploadedAt(data?.uploaded_at)
 
   // Tabs that should NOT show the filter bar
-  const noFilterTabs = new Set(['monthly_closures', 'all_records'])
+  const noFilterTabs = new Set(['monthly_closures', 'all_records', 'targets'])
 
   const renderTab = () => {
     const d = filteredData
@@ -347,6 +349,14 @@ export default function Dashboard({ data, onReset, user, onLogout }) {
           <MonthlyClosures
             monthlyClosures={data.monthly_closures}
             monthlySummary={data.monthly_summary}
+          />
+        )
+
+      case 'targets':
+        return (
+          <TargetsVsActuals
+            monthlyClosures={data.monthly_closures}
+            user={user}
           />
         )
 

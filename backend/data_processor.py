@@ -837,7 +837,8 @@ def process_csvs(deals_bytes, projects_bytes):
 
     # Sort: most recent month first, then by client within same month
     mc_rows.sort(key=lambda r: (r['month_key'], r['client']), reverse=True)
-    monthly_closures = [{k: v for k, v in r.items() if k != 'month_key'} for r in mc_rows]
+    # Keep month_key (YYYY-MM) in output so the Targets vs Actuals tab can group by calendar month
+    monthly_closures = mc_rows
 
     # Monthly summary — also sorted DESC
     monthly_summary = []
