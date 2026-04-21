@@ -225,6 +225,30 @@ def _max_ts(ts1, ts2):
     return None
 
 
+def _norm_header(s):
+    """Normalize a CSV header: lowercase, strip, collapse whitespace, drop punctuation."""
+    if s is None:
+        return ''
+    t = str(s).strip().lower()
+    # drop colons, underscores, dashes, extra punctuation; collapse whitespace
+    for ch in [':', '_', '-', '.', '/', '\\']:
+        t = t.replace(ch, ' ')
+    return ' '.join(t.split())
+
+
+def _build_rename_map(raw_columns, col_map):
+    """Return {actual_col_name: canonical_col_name} for columns present in raw_columns,
+    matching ignoring case/whitespace/punctuation variations.
+    """
+    norm_to_canon = {_norm_header(k): v for k, v in col_map.items()}
+    rename = {}
+    for actual in raw_columns:
+        key = _norm_header(actual)
+        if key in norm_to_canon:
+            rename[actual] = norm_to_canon[key]
+    return rename
+
+
 def process_csvs(deals_bytes, projects_bytes):
     # ─── Read CSVs ────────────────────────────────────────────────────────────
     deals_raw = pd.read_csv(io.BytesIO(deals_bytes))
@@ -247,7 +271,7 @@ def process_csvs(deals_bytes, projects_bytes):
         'Quote': 'quote',
         'Total Cost': 'total_cost',
     }
-    deals_rename = {orig: new for orig, new in col_map_deals.items() if orig in deals_raw.columns}
+    deals_rename = _build_rename_map(deals_raw.columns, col_map_deals)
     df = deals_raw.rename(columns=deals_rename).copy()
 
     # Ensure all expected deal columns exist
@@ -320,7 +344,7 @@ def process_csvs(deals_bytes, projects_bytes):
         'Created Time': 'created_date',
         'Is Converted From Deal': 'is_converted_from_deal',
     }
-    proj_rename = {orig: new for orig, new in col_map_projects.items() if orig in projects_raw.columns}
+    proj_rename = _build_rename_map(projects_raw.columns, col_map_projects)
     proj = projects_raw.rename(columns=proj_rename).copy()
 
     # Ensure all expected project columns exist
@@ -905,16 +929,24 @@ def process_csvs(deals_bytes, projects_bytes):
 
     combined_all = deal_records + proj_records
 
-    # Deduplicate: if a Deal and Project share the same name+city+vehicle, keep only the Deal
-    deal_combined_keys = {
-        (r['name'].strip().lower(), r['city'].strip().lower(), r['vehicle'].strip().lower())
-        for r in combined_all if r['type'] == 'Deal'
-    }
+    # Deduplicate: if a Deal and Project share the same client+city+vehicle, keep only the Deal.
+    # Compare on `client` (the organization name) — `name` often differs between deal_name and project_name
+    # even when they represent the same underlying client. Also match on `name` as a fallback.
+    def _combined_key(r, field):
+        return (
+            str(r.get(field, '')).strip().lower(),
+            str(r.get('city', '')).strip().lower(),
+            str(r.get('vehicle', '')).strip().lower(),
+        )
+
+    deal_client_keys = {_combined_key(r, 'client') for r in combined_all if r['type'] == 'Deal'}
+    deal_name_keys   = {_combined_key(r, 'name')   for r in combined_all if r['type'] == 'Deal'}
+
     combined_all = [
         r for r in combined_all
         if r['type'] == 'Deal'
-        or (r['name'].strip().lower(), r['city'].strip().lower(), r['vehicle'].strip().lower())
-        not in deal_combined_keys
+        or (_combined_key(r, 'client') not in deal_client_keys
+            and _combined_key(r, 'name') not in deal_name_keys)
     ]
 
     combined_all.sort(key=lambda r: r['date_ts'], reverse=True)
